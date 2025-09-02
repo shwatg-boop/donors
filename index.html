@@ -205,36 +205,145 @@ async function listDonorsAPI(province, district, municipality, blood) {
   }
   return json.donors || [];
 }
-
-// Robust list: tolerate donors:null, array, {donors[]}, {data[]}, {rows[]}, {0:{},1:{}}…
-async function listDonorsAPI(district, municipality, blood) {
-  // Always include province from the UI selection
-  const province = provinceSel && provinceSel.value ? provinceSel.value : "";
-
-  const params = new URLSearchParams({
-    action: "list",
-    province: province,          // ← FIX: include province
-    district: district || "",    // keep existing behavior
-    municipality: municipality || ""
-  });
-  if (blood) params.append("blood", blood);
-
-  const res = await fetch(`${API_URL}?${params.toString()}`, { method: "GET" });
-  const txt = await res.text();
-
-  let json = null;
-  try { json = JSON.parse(txt); } catch {}
-
-  if (!res.ok) throw new Error("HTTP " + res.status);
-
-  // Keep your original contract (expects { ok:true, donors:[...] })
-  if (!json || json.ok !== true) {
-    throw new Error((json && (json.error || json.message)) || txt || "Server error");
+function _toArray(x) {
+  if (Array.isArray(x)) return x;
+  if (x == null) return [];
+  if (typeof x === 'string') {
+    const s = x.trim().toLowerCase();
+    if (s === '' || s === 'null' || s === 'undefined') return [];
+    try { return _toArray(JSON.parse(x)); } catch { return []; }
   }
-
-  return json.donors || [];
+  if (typeof x === 'object') {
+    // Convert {0:{},1:{}} into [{},{}] if looks like indexed object
+    const vals = Object.values(x);
+    if (vals.length && vals.every(v => v && typeof v === 'object' && !Array.isArray(v))) return vals;
+  }
+  return [];
 }
 
+function _normalizeRows(json) {
+  // Accept various response shapes
+  if (Array.isArray(json)) return json;
+  if (json && Array.isArray(json.donors)) return json.donors;
+  if (json && Array.isArray(json.data))   return json.data;
+  if (json && Array.isArray(json.rows))   return json.rows;
+  // last resort: try object-of-indices
+  return _toArray(json);
+}
+
+function _mapRow(r, fallbacks) {
+  const o = (r && typeof r === 'object') ? r : {};
+  const phone = o.phone ?? o.Phone ?? o.PHONE ?? o.phone_number ?? o.contact ?? '';
+  const blood = o.blood ?? o.Blood ?? o.BLOOD ?? o.blood_group ?? '';
+  return {
+    name:         o.name ?? o.Name ?? o.NAME ?? '',
+    phone,
+    blood,
+    municipality: o.municipality ?? o.Municipality ?? o.MUNICIPALITY ?? (fallbacks.municipality || ''),
+    district:     o.district ?? o.District ?? o.DISTRICT ?? (fallbacks.district || '')
+  };
+}
+
+async function _callListOnce(q) {
+  // q = { province?, district?, municipality?, blood? }
+  const params = new URLSearchParams({ action: 'list' });
+  if (q.province)     params.append('province', q.province);
+  if (q.district)     params.append('district', q.district);
+  if (q.municipality) params.append('municipality', q.municipality);
+  if (q.blood)        params.append('blood', q.blood);
+
+  const url = `${API_URL}?${params.toString()}`;
+  let res, txt, json = null;
+  try {
+    res = await fetch(url, { method: 'GET', cache: 'no-store' });
+    txt = await res.text();
+  } catch {
+    return []; // network hiccup → treat as empty
+  }
+  if (!res.ok) return [];
+
+  try { json = JSON.parse(txt); } catch {} // some Apps Script send text/plain
+  const rows = _normalizeRows(json);
+  return rows.map(r => _mapRow(r, { district: q.district, municipality: q.municipality }));
+}
+
+// EXPLICIT province in signature; trims values; tries smart fallbacks
+async function listDonorsAPI(province, district, municipality, blood) {
+  const P = (province || '').trim();
+  const D = (district || '').trim();
+  const M = (municipality || '').trim();
+  const B = (blood || '').trim();
+
+  // 1) strict with blood
+  let rows = await _callListOnce({ province: P, district: D, municipality: M, blood: B });
+  if (rows.length) return rows;
+
+  // 2) relax province (some scripts ignore/require only D/M)
+  rows = await _callListOnce({ district: D, municipality: M, blood: B });
+  if (rows.length) return rows;
+
+  // 3) district only (common for broader search)
+  rows = await _callListOnce({ district: D, blood: B });
+  if (rows.length) return rows;
+
+  // 4) retry WITHOUT blood filter (if blood was narrowing out)
+  if (B) {
+    rows = await _callListOnce({ province: P, district: D, municipality: M });
+    if (rows.length) return rows;
+    rows = await _callListOnce({ district: D, municipality: M });
+    if (rows.length) return rows;
+    rows = await _callListOnce({ district: D });
+    if (rows.length) return rows;
+  }
+  return [];
+}
+
+// ------------------ Add donor (tolerant ok/status) ------------------
+
+async function addDonorAPI(payload, adminKey) {
+  if (!adminKey) throw new Error('Admin key required.');
+  const body = new URLSearchParams({
+    action: 'add', admin_key: adminKey,
+    province: payload.province, district: payload.district, municipality: payload.municipality,
+    name: payload.name, phone: payload.phone, blood: payload.blood
+  });
+  const res = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body });
+  const txt = await res.text(); let json = null; try { json = JSON.parse(txt); } catch {}
+  const ok = json && (json.ok === true || json.ok === 1 || json.ok === 'true' || json.status === 'ok');
+  if (!ok) throw new Error(json ? (json.error || json.message || 'Add failed') : txt);
+  return true;
+}
+
+// ------------------ Render (pass province; never crash UI) ------------------
+
+function renderDonors() {
+  const p = provinceSel.value, d = districtSel.value, m = municipalitySel.value, bg = bloodSel.value;
+  if (!p || !d) {
+    donorsBody.innerHTML = '<tr><td colspan="5" class="muted">Select province and district first.</td></tr>';
+    summaryPill.textContent = 'Ready';
+    return;
+  }
+  donorsBody.innerHTML = '<tr><td colspan="5" class="muted">Loading…</td></tr>';
+  listDonorsAPI(p, d, m, bg).then(rows => {
+    if (!Array.isArray(rows)) rows = [];
+    if (rows.length === 0) {
+      donorsBody.innerHTML = `<tr><td colspan="5" class="warn">No donors found for ${m || 'any municipality'}, ${d}.</td></tr>`;
+    } else {
+      donorsBody.innerHTML = rows.map(r => `
+        <tr>
+          <td>${escapeHtml(r.name || '')}</td>
+          <td><a href="tel:${escapeHtml(r.phone || '')}">${escapeHtml(r.phone || '')}</a></td>
+          <td>${escapeHtml(r.blood || '')}</td>
+          <td>${escapeHtml(r.municipality || '')}</td>
+          <td>${escapeHtml(r.district || '')}</td>
+        </tr>`).join('');
+    }
+    summaryPill.textContent = rows.length + ' match' + (rows.length === 1 ? '' : 'es');
+  }).catch(() => {
+    donorsBody.innerHTML = '<tr><td colspan="5" class="warn">No donors found.</td></tr>';
+    summaryPill.textContent = '—';
+  });
+}
 
 // Keep POST add as-is but slightly more tolerant about ok/status
 async function addDonorAPI(payload, adminKey) {
