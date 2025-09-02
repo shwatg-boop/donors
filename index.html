@@ -3,24 +3,15 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>NYFN • Blood Donor Connect</title>
+  <title>NYFN • Blood Donor Connect (CSV‑linked)</title>
   <style>
-    :root{
-      --nyfn:#e11d48; /* rose-600 */
-      --ink:#0f172a;  /* slate-900 */
-      --muted:#64748b;/* slate-500 */
-      --bg:#f8fafc;   /* slate-50 */
-      --card:#ffffff;
-      --ok:#16a34a;
-      --warn:#b45309;
-    }
+    :root{--nyfn:#e11d48;--ink:#0f172a;--muted:#64748b;--bg:#f8fafc;--card:#ffffff;--ok:#16a34a;--warn:#b45309}
     *{box-sizing:border-box}
-    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial;line-height:1.35;background:var(--bg);color:var(--ink)}
+    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial;line-height:1.35;background:var(--bg);color:var(--ink)}
     header{background:var(--card);border-bottom:1px solid #e2e8f0;position:sticky;top:0;z-index:10}
     .wrap{max-width:1080px;margin:auto;padding:16px}
     h1{margin:0;font-size:20px;display:flex;gap:10px;align-items:center}
-    h1 .badge{background:var(--nyfn);color:#fff;padding:2px 8px;border-radius:999px;font-size:12px;letter-spacing:.3px}
-
+    .badge{background:var(--nyfn);color:#fff;padding:2px 8px;border-radius:999px;font-size:12px;letter-spacing:.3px}
     .grid{display:grid;gap:12px}
     @media(min-width:760px){.grid.cols-3{grid-template-columns:1fr 1fr 1fr}}
     .card{background:var(--card);border:1px solid #e2e8f0;border-radius:14px;padding:14px}
@@ -29,434 +20,238 @@
     select:focus,input:focus,button:focus{outline:3px solid rgba(225,29,72,.2);border-color:var(--nyfn)}
     button{cursor:pointer;background:var(--nyfn);color:#fff;border-color:var(--nyfn)}
     button.secondary{background:#fff;color:var(--ink);border-color:#cbd5e1}
-    .muted{color:var(--muted)}
-    .ok{color:var(--ok)}
-    .warn{color:var(--warn)}
-    .stack{display:flex;gap:10px;flex-wrap:wrap}
-    .stack > *{flex:1 1 180px}
-
-    table{width:100%;border-collapse:collapse;font-size:14px}
-    th,td{padding:10px;border-bottom:1px solid #e2e8f0;text-align:left}
+    .muted{color:var(--muted)}.ok{color:var(--ok)}.warn{color:var(--warn)}
+    .stack{display:flex;gap:10px;flex-wrap:wrap}.stack>*{flex:1 1 180px}
+    table{width:100%;border-collapse:collapse;font-size:14px}th,td{padding:10px;border-bottom:1px solid #e2e8f0;text-align:left}
     th{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
     .pill{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border-radius:999px;border:1px solid #e2e8f0;background:#fff;font-size:12px}
-    .footer{color:var(--muted);font-size:12px;margin-top:18px}
-    .hide{display:none}
-    .inline{display:inline}
+    .footer{color:var(--muted);font-size:12px;margin-top:18px}.hide{display:none}.inline{display:inline}
   </style>
+  <!-- CSV parser (reliable for quoted commas). Loads fast from a popular CDN. -->
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js" defer></script>
 </head>
 <body>
-  <header>
-    <div class="wrap">
-      <h1>
-        <span class="badge">NYFN</span>
-        Blood Donor Connect
-        <span class="muted" style="font-weight:500">— Municipality First, Local Responder</span>
-      </h1>
+<header><div class="wrap"><h1><span class="badge">NYFN</span> Blood Donor Connect <span class="muted" style="font-weight:500">— CSV‑linked</span></h1></div></header>
+<main class="wrap" style="padding-block:18px">
+  <section class="grid cols-3">
+    <div class="card"><label for="province">Province</label><select id="province"></select></div>
+    <div class="card"><label for="district">District</label><select id="district"></select></div>
+    <div class="card"><label for="municipality">Municipality</label><select id="municipality"></select></div>
+  </section>
+
+  <section class="grid cols-3" style="margin-top:12px">
+    <div class="card"><label for="blood">Blood group</label>
+      <select id="blood">
+        <option value="">Any</option>
+        <option>A+</option><option>A-</option><option>B+</option><option>B-</option>
+        <option>AB+</option><option>AB-</option><option>O+</option><option>O-</option>
+      </select>
     </div>
-  </header>
+    <div class="card"><label>&nbsp;</label><button id="btnShow">Show donors</button></div>
+    <div class="card"><label>&nbsp;</label><div class="pill" id="summaryPill">Booting…</div></div>
+  </section>
 
-  <main class="wrap" style="padding-block:18px">
-    <section class="grid cols-3">
-      <div class="card">
-        <label for="province">Province</label>
-        <select id="province"></select>
-      </div>
-      <div class="card">
-        <label for="district">District</label>
-        <select id="district"></select>
-      </div>
-      <div class="card">
-        <label for="municipality">Municipality</label>
-        <select id="municipality"></select>
-      </div>
-    </section>
+  <section class="card" style="margin-top:12px">
+    <div class="stack">
+      <div class="pill"><strong>Municipality authority</strong> <span id="authorityLabel" class="muted">— not set</span></div>
+      <div class="pill"><strong>Hotline</strong> <a id="authorityPhone" class="inline" href="#">—</a></div>
+    </div>
+    <div class="footer">If no donor responds, call the authority for the selected municipality.</div>
+  </section>
 
-    <section class="grid cols-3" style="margin-top:12px">
-      <div class="card">
-        <label for="blood">Blood group</label>
-        <select id="blood">
-          <option value="">Any</option>
-          <option>A+</option><option>A-</option>
-          <option>B+</option><option>B-</option>
-          <option>AB+</option><option>AB-</option>
-          <option>O+</option><option>O-</option>
-        </select>
-      </div>
-      <div class="card">
-        <label>&nbsp;</label>
-        <button id="btnShow">Show donors</button>
-      </div>
-      <div class="card">
-        <label>&nbsp;</label>
-        <div class="pill" id="summaryPill">Ready</div>
-      </div>
-    </section>
+  <section class="card" style="margin-top:12px">
+    <h3 style="margin:0 0 8px 0">Matching donors</h3>
+    <table id="donorsTable">
+      <thead><tr><th>Name</th><th>Phone</th><th>Blood</th><th>Municipality</th><th>District</th></tr></thead>
+      <tbody id="donorsBody"><tr><td colspan="5" class="muted">Select a location and click <em>Show donors</em>.</td></tr></tbody>
+    </table>
+  </section>
 
-    <section class="card" style="margin-top:12px">
-      <div class="stack">
-        <div class="pill"><strong>Municipality authority</strong> <span id="authorityLabel" class="muted">— not set</span></div>
-        <div class="pill"><strong>Hotline</strong> <a id="authorityPhone" class="inline" href="#">—</a></div>
+  <section class="card" style="margin-top:12px">
+    <details open><summary><strong>Admin</strong> — add a single donor</summary>
+      <p class="footer" style="margin-top:6px">Only the admin key is required to add a donor. Regular users do not need it.</p>
+      <div class="grid cols-3" style="margin-top:10px">
+        <div><label for="adminPass">Admin key</label><input id="adminPass" type="password" placeholder="Enter admin key"/></div>
       </div>
-      <div class="footer">If no donor responds, call the NYFN authority for the selected municipality.</div>
-    </section>
-
-    <section class="card" style="margin-top:12px">
-      <h3 style="margin:0 0 8px 0">Matching donors</h3>
-      <table id="donorsTable">
-        <thead>
-          <tr><th>Name</th><th>Phone</th><th>Blood</th><th>Municipality</th><th>District</th></tr>
-        </thead>
-        <tbody id="donorsBody">
-          <tr><td colspan="5" class="muted">Select a location and click <em>Show donors</em>.</td></tr>
-        </tbody>
-      </table>
-    </section>
-
-    <section class="card" style="margin-top:12px">
-      <details>
-        <summary><strong>Admin</strong> — add a single donor (password&nbsp;required)</summary>
+      <div id="adminForm" style="margin-top:10px">
+        <div class="grid cols-3">
+          <div><label for="aProvince">Province</label><select id="aProvince"></select></div>
+          <div><label for="aDistrict">District</label><select id="aDistrict"></select></div>
+          <div><label for="aMunicipality">Municipality</label><select id="aMunicipality"></select></div>
+        </div>
         <div class="grid cols-3" style="margin-top:10px">
-          <div>
-            <label for="adminPass">Password</label>
-            <input id="adminPass" type="password" placeholder="Enter password (hint: 1234)" />
-          </div>
-          <div>
-            <label>&nbsp;</label>
-            <button class="secondary" id="btnUnlock">Unlock</button>
+          <div><label for="aName">Donor name</label><input id="aName" placeholder="Full name"/></div>
+          <div><label for="aPhone">Phone (+977…)</label><input id="aPhone" placeholder="e.g. +9779801xxxxxx"/></div>
+          <div><label for="aBlood">Blood group</label>
+            <select id="aBlood">
+              <option>A+</option><option>A-</option><option>B+</option><option>B-</option>
+              <option>AB+</option><option>AB-</option><option>O+</option><option>O-</option>
+            </select>
           </div>
         </div>
-        <div id="adminForm" class="hide" style="margin-top:10px">
-          <div class="grid cols-3">
-            <div>
-              <label for="aProvince">Province</label>
-              <select id="aProvince"></select>
-            </div>
-            <div>
-              <label for="aDistrict">District</label>
-              <select id="aDistrict"></select>
-            </div>
-            <div>
-              <label for="aMunicipality">Municipality</label>
-              <select id="aMunicipality"></select>
-            </div>
-          </div>
-          <div class="grid cols-3" style="margin-top:10px">
-            <div>
-              <label for="aName">Donor name</label>
-              <input id="aName" placeholder="Full name" />
-            </div>
-            <div>
-              <label for="aPhone">Phone (+977…)</label>
-              <input id="aPhone" placeholder="e.g. +9779801xxxxxx" />
-            </div>
-            <div>
-              <label for="aBlood">Blood group</label>
-              <select id="aBlood">
-                <option>A+</option><option>A-</option>
-                <option>B+</option><option>B-</option>
-                <option>AB+</option><option>AB-</option>
-                <option>O+</option><option>O-</option>
-              </select>
-            </div>
-          </div>
-          <div class="stack" style="margin-top:10px">
-            <button id="btnAddDonor">Add donor</button>
-            <button class="secondary" id="btnExport">Export data (JSON)</button>
-            <input id="importFile" type="file" accept="application/json" class="hide" />
-            <button class="secondary" id="btnImport">Import data (JSON)</button>
-          </div>
-          <div class="footer" id="adminMsg"></div>
-        </div>
-      </details>
-    </section>
+        <div class="stack" style="margin-top:10px"><button id="btnAddDonor">Add donor</button><span id="adminMsg" class="footer"></span></div>
+      </div>
+    </details>
+  </section>
 
-    <div class="footer">Data is saved in your browser only (no server). Replace with a backend when ready.</div>
-  </main>
+  <div class="footer" id="footNote">Backend: Apps Script (GET action=list, POST action=add). API is prelinked.</div>
+</main>
 
-  <script>
-  // ---------------------------
-  // Provinces
-  // ---------------------------
-  const PROVINCES = [
-    "Koshi","Madhesh","Bagmati","Gandaki","Lumbini","Karnali","Sudurpashchim"
-  ];
+<script>
+// === Config ===
+const API_URL = "https://script.google.com/macros/s/AKfycbxS61tz3MCATzvFBP21oFm9eT5WiEumy7qV3212zCPykUWSFf9erlSRkxLQ1ubL86cBqQ/exec"; // fixed
+const CSV_PATH = "./province_district_municipality.csv"; // put this file next to index.html
 
-  // District → Province map (normalized district names)
-  const districtToProvince = {
-    // Koshi
-    "Bhojpur":"Koshi","Dhankuta":"Koshi","Ilam":"Koshi","Jhapa":"Koshi","Khotang":"Koshi","Morang":"Koshi","Okhaldhunga":"Koshi","Panchthar":"Koshi","Sankhuwasabha":"Koshi","Solukhumbu":"Koshi","Sunsari":"Koshi","Taplejung":"Koshi","Tehrathum":"Koshi","Udayapur":"Koshi",
-    // Madhesh
-    "Bara":"Madhesh","Dhanusa":"Madhesh","Mahottari":"Madhesh","Parsa":"Madhesh","Rautahat":"Madhesh","Saptari":"Madhesh","Sarlahi":"Madhesh","Siraha":"Madhesh",
-    // Bagmati
-    "Bhaktapur":"Bagmati","Chitwan":"Bagmati","Dhading":"Bagmati","Dolakha":"Bagmati","Kathmandu":"Bagmati","Kavrepalanchok":"Bagmati","Lalitpur":"Bagmati","Makwanpur":"Bagmati","Nuwakot":"Bagmati","Ramechhap":"Bagmati","Rasuwa":"Bagmati","Sindhuli":"Bagmati","Sindhupalchowk":"Bagmati",
-    // Gandaki
-    "Baglung":"Gandaki","Gorkha":"Gandaki","Kaski":"Gandaki","Lamjung":"Gandaki","Manang":"Gandaki","Myagdi":"Gandaki","Nawalpur":"Gandaki","Parbat":"Gandaki","Syangja":"Gandaki","Tanahun":"Gandaki",
-    // Lumbini
-    "Arghakhanchi":"Lumbini","Banke":"Lumbini","Bardiya":"Lumbini","Dang Deukhuri":"Lumbini","East Rukum":"Lumbini","Gulmi":"Lumbini","Kapilvastu":"Lumbini","Parasi":"Lumbini","Palpa":"Lumbini","Pyuthan":"Lumbini","Rolpa":"Lumbini","Rupandehi":"Lumbini",
-    // Karnali
-    "Dailekh":"Karnali","Dolpa":"Karnali","Humla":"Karnali","Jajarkot":"Karnali","Jumla":"Karnali","Kalikot":"Karnali","Mugu":"Karnali","Salyan":"Karnali","Surkhet":"Karnali","West Rukum":"Karnali",
-    // Sudurpashchim
-    "Achham":"Sudurpashchim","Baitadi":"Sudurpashchim","Bajhang":"Sudurpashchim","Bajura":"Sudurpashchim","Dadeldhura":"Sudurpashchim","Darchula":"Sudurpashchim","Kailali":"Sudurpashchim","Kanchanpur":"Sudurpashchim","Doti":"Sudurpashchim"
-  };
+// === DOM helpers ===
+const $ = (id)=>document.getElementById(id);
+function fillSelect(el, values, placeholder){ el.innerHTML=''; if(placeholder){const o=document.createElement('option');o.value='';o.textContent=placeholder;el.appendChild(o);} (values||[]).forEach(v=>{const opt=document.createElement('option');opt.value=opt.textContent=v;el.appendChild(opt);}); }
+function escapeHtml(s){return (s||'').replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"}[c]));}
 
-  // District → Municipalities (hard-coded; national parks/reserves removed)
-  const districtToMunicipalities = {
-    "Achham": ["Bannigadhi Jaygadh","Chaurpati","Dhakari","Kamalbazar","Mangalsen","Mellekh","Panchadewal Binayak","Ramaroshan","Sanphebagar","Turmakhad"],
-    "Arghakhanchi": ["Bhumikasthan","Chhatradev","Malarani","Panini","Sandhikharka","Shitaganga"],
-    "Baglung": ["Badigad","Bareng","Dhorpatan","Galkot","Jaimini","Kathekhola","Nisikhola","Taman Khola","Tara Khola"],
-    "Baitadi": ["Dasharathchand","Dilashaini","Dogdakedar","Melauli","Pancheshwar","Patan","Purchaudi","Shivanath","Sigas","Surnaya"],
-    "Bajhang": ["Bitthadchir","Bungal","Chhabispathibhera","Durgathali","Jaya Prithvi","Kedarsyu","Khaptadchhanna","Masta","Saipal [Kanda]","Surma","Talkot","Thalara"],
-    "Bajura": ["Badimalika","Budhiganga","Budhinanda","Chhededaha","Gaumul","Himali","Jagannath [Pandav Gupha]","Swamikartik Khapar","Triveni"],
-    "Banke": ["Baijanath","Duduwa","Janaki","Khajura","Kohalpur","Narainapur","Nepalganj","Rapti Sonari"],
-    "Bara": ["Adarsha Kotwal","Baragadhi","Bishrampur","Devtal","Jitpur Simara","Kalaiya","Karaiyamai","Kolhabi","Mahagadhimai","Nijgadh","Pachrauta","Parawanipur","Pheta","Prasauni","Simraungadh","Suwarna"],
-    "Bardiya": ["Badhaiyatal","Bansgadhi","Barbardiya","Geruwa","Gulariya","Madhuwan","Rajapur","Thakurbaba"],
-    "Bhaktapur": ["Changunarayan","Madhyapur Thimi","Suryabinayak"],
-    "Bhojpur": ["Aamchok","Arun","Hatuwagadhi","Pauwadungma","Ramprasad Rai","Salpasilichho","Shadananda","Tyamkemaiyung"],
-    "Chitwan": ["Bharatpur","Ichchhakamana","Kalika","Khairhani","Madi","Rapti","Ratnanagar"],
-    "Dadeldhura": ["Aalital","Ajaymeru","Amargadhi","Bhageshwar","Ganyapadhura","Navadurga","Parshuram"],
-    "Dailekh": ["Aathabis","Bhagawatimai","Bhairabi","Chamunda Bindrasaini","Dullu","Dungeshwar","Gurans","Mahabu","Narayan","Naumule","Thantikandh"],
-    "Dang Deukhuri": ["Babai","Banglachuli","Dangisharan","Gadhawa","Ghorahi","Lamahi","Rajpur","Rapti","Shantinagar","Tulsipur"],
-    "Darchula": ["Apihimal","Byans","Duhun","Lekam","Mahakali","Malikarjun","Marma","Naugad","Shailyashikhar"],
-    "Dhading": ["Benighat Rorang","Dhunibeshi","Gajuri","Galchhi","Gangajamuna","Jwalamukhi","Khaniyabas","Netrawati Dabjong","Nilkantha","Rubi Bhyali [Rubi Valley]","Siddhalek","Thakre","Tripurasundari"],
-    "Dhankuta": ["Chaubise","Chhathar Jorpati","Mahalaxmi","Pakhribas","Sahidbhumi [Khalsachhintang Shahidbhumi]","Sangurigadhi"],
-    "Dhanusa": ["Aurahi","Bateshwar","Bidehi","Chhireshwarnath","Dhanauji","Dhanushadham","Ganeshman Charnath","Hansapur","Janaknandini","Janakpur","Kamala","Lakshminiya","Mithila","Mithila Bihari","Mukhiyapatti Musharmiya","Nagrain","Sabaila","Shahidnagar"],
-    "Dolakha": ["Baiteshwar","Bhimeshwar","Bigu","Gaurishankar","Jiri","Kalinchok","Melung","Shailung","Tamakoshi"],
-    "Dolpa": ["Chharka Tangsong","Dolpo Buddha","Jagdulla","Kaike","Mudkechula","She Phoksundo","Thuli Bheri","Tripurasundari"],
-    "Doti": ["Aadarsha","Badikedar","Bogtan Phudsil","Dipayal Silgadhi","Jorayal","K.I. Singh","Purbichauki","Sayal","Shikhar"],
-    "East Rukum": ["Bhume","Putha Uttarganga","Sisne"],
-    "Gorkha": ["Aarughat","Ajirkot","Bhimsen","Chumanuwri","Dharche","Gandaki","Palungtar","Shahid Lakhan","Siranchok","Sulikot"],
-    "Gulmi": ["Chandrakot","Chhatrakot","Dhurkot","Gulmi Darbar","Isma","Kaligandaki","Madane","Malika","Musikot","Resunga","Ruru","Satyawati"],
-    "Humla": ["Adanchuli","Chankheli","Kharpunath","Namkha","Sarkegad","Simkot","Tanjakot"],
-    "Ilam": ["Chulachuli","Deumai","Mai","Maijogmai","Mangsebung","Phakphokthum","Rong","Sandakpur","Suryodaya"],
-    "Jajarkot": ["Barekot","Bheri","Chhedagad","Junichande","Kuse","Nalgad [Triveni Nalgad]","Shivalaya"],
-    "Jhapa": ["Arjundhara","Bahradashi","Bhadrapur","Birtamod","Buddhashanti","Damak","Gauradaha","Gaurigunj","Haldibari","Kachankawal","Kamal","Kankai","Mechinagar","Shivasatakshi"],
-    "Jumla": ["Chandannath","Guthichaur","Hima","Kankasundari","Patarasi","Sinja","Tatopani","Tila"],
-    "Kailali": ["Bardagoriya","Bhajani","Chure","Dhangadhi","Gauriganga","Ghodaghodi","Godawari","Janaki","Joshipur","Kailari","Lamkichuha","Mohanyal","Tikapur"],
-    "Kalikot": ["Khandachakra","Mahawai","Narharinath","Pachaljharana","Palata","Raskot","Sanni Triveni","Shubha Kalika","Tilagufa"],
-    "Kanchanpur": ["Bedkot","Belauri","Beldandi","Bhimdatta","Krishnapur","Laljhadi","Mahakali","Punarbas","Shuklaphanta"],
-    "Kapilvastu": ["Banganga","Bijaynagar","Buddhabhumi","Krishnanagar","Maharajgunj","Mayadevi","Shivraj","Shuddhodhan","Yasodhara"],
-    "Kaski": ["Annapurna","Machhapuchchhre","Madi","Pokhara","Rupa"],
-    "Kathmandu": ["Kathmandu Metropolitan", "Budhanilkantha","Chandragiri","Dakshinkali","Gokarneshwar","Kageshwari Manohara","Kirtipur","Nagarjun","Shankharapur","Tarakeshwar","Tokha"],
-    "Kavrepalanchok": ["Banepa","Bethanchok","Bhumlu","Chaurideurali","Dhulikhel","Khanikhola","Mahabharat","Mandandeupur","Namobuddha","Panauti","Panchkhal","Roshi","Temal"],
-    "Khotang": ["Aiselukharka","Barahapokhari","Diktel Rupakot Majhuwagadhi","Diprung","Halesi Tuwachung","Jantedhunga","Kepilasgadhi","Khotehang","Rawa Besi [Lamidanda]","Sakela"],
-    "Lalitpur": ["Bagmati","Godawari","Konjyosom","Mahalaxmi","Mahankal"],
-    "Lamjung": ["Besishahar","Dordi","Dudhpokhari","Kwholasothar","Madhyanepal","Marsyangdi","Rainas","Sundarbazar"],
-    "Mahottari": ["Aurahi","Balwa","Bardibas","Bhangaha","Ekdara","Gaushala","Jaleshwar","Loharpatti","Manra Shisawa","Matihani","Pipra","Ramgopalpur","Samsi","Sonma"],
-    "Makwanpur": ["Bagmati","Bakaiya","Bhimphedi","Hetauda","Indrasarowar","Kailash","Makawanpurgadhi","Manahari","Raksirang","Thaha"],
-    "Manang": ["Chame","Manang Ngisyang [Neshyang]","Narpa Bhumi [Narphu]","Nasong"],
-    "Morang": ["Belbari","Biratnagar","Budhiganga","Dhanpalthan","Gramthan","Jahada","Kanepokhari","Katahari","Kerabari","Letang","Miklajung","Pathari Shanishchare","Rangeli","Ratuwamai","Sunawarshi","Sundarharaicha","Urlabari"],
-    "Mugu": ["Chhayanath Rara","Khatyad","Mugum Karmarong","Soru"],
-    "Mustang": ["Gharapjhong","Lo-Ghekar Damodarkunda [Dalome]","Lomanthang","Thasang","Varagung Muktikshetra"],
-    "Myagdi": ["Annapurna","Beni","Dhaulagiri","Malika","Mangala","Raghuganga"],
-    "Nawalpur": ["Baudikali","Binayi Tribeni","Bulingtar","Devchuli","Gaindakot","Hupsekot","Kawasoti","Madhyabindu"],
-    "Nuwakot": ["Belkotgadhi","Bidur","Dupcheshwar","Kakani","Kispang","Likhu","Meghang","Panchkanya","Shivapuri","Suryagadhi","Tadi","Tarkeshwar"],
-    "Okhaldhunga": ["Champadevi","Chishankhugadhi","Khijidemba","Likhu","Manebhanjyang","Molung","Siddhicharan","Sunkoshi"],
-    "Palpa": ["Bagnaskali","Mathagadhi","Nisdi","Purbakhola","Rainadevi Chhahara","Rambha","Rampur","Ribdikot","Tansen","Tinau"],
-    "Panchthar": ["Hilihang","Kummayak","Miklajung","Phalelung","Phalgunanda","Phidim","Tumwewa","Yangwarak"],
-    "Parasi": ["Bardghat","Palhinandan","Pratappur","Ramgram","Sarawal","Sunwal","Susta"],
-    "Parbat": ["Bihadi","Jaljala","Kushma","Mahashila","Modi","Paiyun","Phalewas"],
-    "Parsa": ["Bahudarmai","Bindabasini","Birgunj","Chhipahrmai","Dhobini","Jagarnathpur","Jira Bhawani","Kalikamai","Pakahamainpur","Parsagadhi","Paterwa Sugauli","Pokhariya","Ramnagar","Sakhuwa Prasauni","Thori"],
-    "Pyuthan": ["Airawati","Gaumukhi","Jhimruk","Mallarani","Mandavi","Naubahini","Sarumarani","Swargadwari"],
-    "Ramechhap": ["Doramba","Gokulganga","Khandadevi","Likhu","Manthali","Sunapati","Umakunda"],
-    "Rasuwa": ["Aamachhodingmo [Parbatikunda]","Gosaikunda","Kalika","Naukunda","Uttargaya"],
-    "Rautahat": ["Baudhimai","Brindawan","Chandrapur","Dewahi Gonahi","Durga Bhagwati","Gadhimai","Garuda","Gaur","Gujara","Ishanath","Katahariya","Madhav Narayan","Maulapur","Paroha","Phatuwabijayapur","Rajdevi","Rajpur","Yamunamai"],
-    "Rolpa": ["Gangadev [Sukidaha]","Lungri","Madi","Paribartan [Duikholi]","Runtigadhi","Sunchhahari","Sunilsmriti [Suwarnabati]","Thabang","Triveni"],
-    "Rupandehi": ["Butwal","Devdaha","Gaidahawa","Kanchan","Kotahimai","Lumbini Sanskritik","Marchawari","Mayadevi","Omsatiya","Rohini","Sainamaina","Sammarimai","Shuddhodhan","Siddharthanagar","Siyari","Tilottama"],
-    "Salyan": ["Bagchaur","Bangad Kupinde","Chhatreshwari","Darma","Kalimati","Kapurkot","Kumakh","Sharada","Siddha Kumakh [Dhorchaur]","Triveni"],
-    "Sankhuwasabha": ["Bhotkhola","Chainpur","Chichila","Dharmadevi","Khandbari","Madi","Makalu","Panchkhapan","Savahapokhari","Silichong"],
-    "Saptari": ["Agnisair Krishnasawaran","Balan-Bihul","Bishnupur","Bodebarsain","Chhinnamasta","Dakneshwori","Hanumannagar Kankalini","Kanchanrup","Khadak","Mahadeva","Rajbiraj","Rajgadh [Belhi Chapena]","Rupani","Saptakoshi","Shambhunath","Surunga","Tilathi Koiladi","Tirhut"],
-    "Sarlahi": ["Bagmati","Balra","Barhathawa","Basbariya","Bishnu","Brahmapuri","Chakraghatta","Chandranagar","Dhankaul","Godaita","Haripur","Haripurwa","Hariwan","Ishworpur","Kaudena","Kawilasi","Lalbandi","Malangwa"],
-    "Sindhuli": ["Dudhauli","Ghyanglekh","Golanjor","Hariharpurgadhi","Kamalamai","Marin","Phikkal","Sunkoshi","Tinpatan"],
-    "Sindhupalchowk": ["Bahrabise","Balephi","Bhotekoshi","Chautara Sangachokgadhi","Helambu","Indrawati","Jugal","Lisankhu Pakhar","Melamchi","Panchpokhari Thangpal","Sunkoshi","Tripurasundari"],
-    "Siraha": ["Arnama","Aurahi","Bariyarpatti","Bhagwanpur","Bishnupur","Dhangadhimai","Golbazar","Kalyanpur","Karjanha","Lahan","Laksmipur Patari","Mirchaiya","Naraha","Nawarajpur","Sakhuwanankarkatti","Sukhipur"],
-    "Solukhumbu": ["Dudhkoshi","Khumbu Pasanglhamu","Likhupike","Mahakulung","Nechasalyan","Solududhkunda","Sotang","Thulung Dudhkoshi"],
-    "Sunsari": ["Barah","Barju","Bhokraha","Dewanganj","Dharan","Duhabi","Gadhi","Harinagara","Inaruwa","Itahari","Koshi","Ramdhuni"],
-    "Surkhet": ["Barahatal","Bheriganga","Birendranagar","Chaukune","Chingad","Gurbhakot","Lekbeshi","Panchapuri","Simta"],
-    "Syangja": ["Aandhikhola","Arjunchaupari","Bhirkot","Biruwa","Chapakot","Galyang","Harinas","Kaligandaki","Phedikhola","Putalibazar","Waling"],
-    "Tanahun": ["Anbukhaireni","Bandipur","Bhanu","Bhimad","Devghat","Ghiring","Myagde","Rhishing","Shuklagandaki","Vyas"],
-    "Taplejung": ["Aathrai Tribeni","Maiwakhola","Meringden","Mikwakhola","Pathibhara Yangwarak","Phaktanglung","Phungling","Sidingwa","Sirijangha"],
-    "Tehrathum": ["Aathrai","Chhathar","Laligurans","Menchhayayem","Myanglung","Phedap"],
-    "Udayapur": ["Belaka","Chaudandigadhi","Katari","Limchungbung [Sunkoshi]","Rautamai","Tapli","Triyuga","Udayapurgadhi"],
-    "West Rukum": ["Aathbiskot","Banphikot","Chaurjahari","Musikot","Sani Bheri","Triveni"]
-  };
+// === Elements ===
+const provinceSel=$('province'), districtSel=$('district'), municipalitySel=$('municipality'), bloodSel=$('blood');
+const donorsBody=$('donorsBody'), summaryPill=$('summaryPill'), authorityLabel=$('authorityLabel');
+const aProvince=$('aProvince'), aDistrict=$('aDistrict'), aMunicipality=$('aMunicipality');
 
-  // Province → Districts map computed from districtToProvince (single, no duplicates)
-  const provinceToDistricts = PROVINCES.reduce((acc,p)=>{acc[p]=[];return acc;},{});
-  Object.entries(districtToProvince).forEach(([d,p])=>{
-    if (provinceToDistricts[p]) provinceToDistricts[p].push(d);
-  });
-  // Sort districts and municipalities alphabetically for clean UI
-  Object.values(provinceToDistricts).forEach(arr=>arr.sort((a,b)=>a.localeCompare(b)));
-  Object.keys(districtToMunicipalities).forEach(d=>{
-    districtToMunicipalities[d] = districtToMunicipalities[d].slice().sort((a,b)=>a.localeCompare(b));
-  });
+// === State built from CSV ===
+let HIER = { provinces: [], districtsByProvince: {}, municipalitiesByDistrict: {} };
 
-  // ---------------------------------
-  // Persistence helpers (localStorage)
-  // ---------------------------------
-  const LS_KEY = 'nyfn_donors_v1';
-  function loadAllDonors(){ try{ return JSON.parse(localStorage.getItem(LS_KEY)||'[]'); }catch{ return []; } }
-  function saveAllDonors(list){ localStorage.setItem(LS_KEY, JSON.stringify(list)); }
-
-  // ---------------------------------
-  // UI wiring
-  // ---------------------------------
-  const $ = (id)=>document.getElementById(id);
-  const provinceSel = $('province');
-  const districtSel = $('district');
-  const municipalitySel = $('municipality');
-  const bloodSel = $('blood');
-  const donorsBody = $('donorsBody');
-  const summaryPill = $('summaryPill');
-  const authorityLabel = $('authorityLabel');
-  const authorityPhone = $('authorityPhone');
-
-  const aProvince = $('aProvince');
-  const aDistrict = $('aDistrict');
-  const aMunicipality = $('aMunicipality');
-
-  function fillSelect(el, values, placeholder){
-    el.innerHTML = '';
-    if(placeholder){
-      const opt=document.createElement('option'); opt.value=''; opt.textContent=placeholder; el.appendChild(opt);
-    }
-    values.forEach(v=>{ const o=document.createElement('option'); o.value=o.textContent=v; el.appendChild(o); });
+// === Load CSV (works on GitHub Pages + any local HTTP server) ===
+async function loadCSV(){
+  // Ensure Papa is ready
+  if(typeof Papa === 'undefined'){
+    await new Promise((resolve)=>{document.addEventListener('DOMContentLoaded', resolve, {once:true});});
   }
+  const res = await fetch(CSV_PATH, {cache:'no-store'});
+  if(!res.ok){ throw new Error('CSV fetch failed: ' + res.status); }
+  const csvText = await res.text();
+  const parsed = Papa.parse(csvText, { header:true, skipEmptyLines:true });
+  if(parsed.errors && parsed.errors.length){ console.warn('CSV parse warnings', parsed.errors); }
+  const rows = parsed.data.map(r=>({
+    province: String(r.province||r.Province||r.PROVINCE||'').trim(),
+    district: String(r.district||r.District||r.DISTRICT||'').trim(),
+    municipality: String(r.municipality||r.Municipality||r.MUNICIPALITY||'').trim(),
+  })).filter(r=>r.province && r.district && r.municipality);
 
-  function onProvinceChange(){
+  // Preserve CSV order while unique-ing
+  const provinces = [];
+  const seenP = new Set();
+  const districtsByProvince = {};
+  const municipalitiesByDistrict = {};
+
+  for(const r of rows){
+    if(!seenP.has(r.province)){ seenP.add(r.province); provinces.push(r.province); districtsByProvince[r.province] = districtsByProvince[r.province] || []; }
+    const dlist = districtsByProvince[r.province];
+    if(!dlist.includes(r.district)) dlist.push(r.district);
+    const mlist = municipalitiesByDistrict[r.district] || (municipalitiesByDistrict[r.district] = []);
+    if(!mlist.includes(r.municipality)) mlist.push(r.municipality);
+  }
+  HIER = { provinces, districtsByProvince, municipalitiesByDistrict };
+}
+
+function bootSelectors(){
+  fillSelect(provinceSel, HIER.provinces, 'Select province');
+  fillSelect(aProvince, HIER.provinces, 'Select province');
+
+  provinceSel.addEventListener('change', ()=>{
     const p = provinceSel.value;
-    const districts = provinceToDistricts[p]||[];
-    fillSelect(districtSel, districts, 'Select district');
-    // Clear municipalities until district is picked
+    fillSelect(districtSel, HIER.districtsByProvince[p]||[], 'Select district');
     fillSelect(municipalitySel, [], 'Select municipality');
-  }
-
-  function onDistrictChange(){
+  });
+  districtSel.addEventListener('change', ()=>{
     const d = districtSel.value;
-    const munis = (districtToMunicipalities[d]||[]).slice().sort((a,b)=>a.localeCompare(b));
-    fillSelect(municipalitySel, munis, 'Select municipality');
-    // Reset authority display until a muni is chosen
-    authorityLabel.textContent = '— not set';
-    authorityPhone.textContent = '—'; authorityPhone.removeAttribute('href');
-  }
-
-  function bootSelectors(){
-    fillSelect(provinceSel, PROVINCES, 'Select province');
-    provinceSel.addEventListener('change', onProvinceChange);
-    districtSel.addEventListener('change', onDistrictChange);
-    municipalitySel.addEventListener('change', ()=>{
-      const m = municipalitySel.value;
-      authorityLabel.textContent = m ? `${m} authority` : '— not set';
-      authorityPhone.textContent = '—'; authorityPhone.removeAttribute('href');
-    });
-
-    // Admin mirrors
-    fillSelect(aProvince, PROVINCES, 'Select province');
-    aProvince.addEventListener('change', ()=>{
-      const p = aProvince.value;
-      const ds = provinceToDistricts[p]||[];
-      fillSelect(aDistrict, ds, 'Select district');
-      aDistrict.dispatchEvent(new Event('change'));
-    });
-    aDistrict.addEventListener('change', ()=>{
-      const d = aDistrict.value;
-      const ms = (districtToMunicipalities[d]||[]).slice().sort((a,b)=>a.localeCompare(b));
-      fillSelect(aMunicipality, ms, 'Select municipality');
-    });
-  }
-
-  async function renderDonors(){
-    const p = provinceSel.value, d = districtSel.value, m = municipalitySel.value, bg = bloodSel.value;
-    if(!p||!d||!m){
-      donorsBody.innerHTML = `<tr><td colspan="5" class="muted">Select province, district and municipality first.</td></tr>`;
-      return;
-    }
-    const all = await loadAllDonors();
-    const rows = all.filter(x=>x.district===d && x.municipality===m && (!bg || x.blood===bg));
-    if(rows.length===0){
-      donorsBody.innerHTML = `<tr><td colspan="5" class="warn">No donors yet for ${m}, ${d}. Use the Admin section to add donors. If urgent, contact the NYFN authority above.</td></tr>`;
-    }else{
-      donorsBody.innerHTML = rows.map(r=>`<tr><td>${escapeHtml(r.name)}</td><td><a href="tel:${r.phone}">${r.phone}</a></td><td>${r.blood}</td><td>${escapeHtml(r.municipality)}</td><td>${escapeHtml(r.district)}</td></tr>`).join('');
-    }
-    summaryPill.textContent = `${rows.length} match${rows.length===1?'':'es'}`;
-    authorityLabel.textContent = `${m} authority`;
-  }
-
-  $('btnShow').addEventListener('click', renderDonors);
-
-  function escapeHtml(s){return (s||'').replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"}[c]));}
-
-  // ---------------- Admin -----------------
-  // using ADMIN_PASSWORD defined above in API helpers
-  const adminMsg = $('adminMsg');
-
-  $('btnUnlock').addEventListener('click', ()=>{
-    if($('adminPass').value===ADMIN_PASSWORD){
-      $('adminForm').classList.remove('hide');
-      adminMsg.textContent = 'Admin unlocked.';
-      if(!aProvince.value){
-        aProvince.value = provinceSel.value; aProvince.dispatchEvent(new Event('change'));
-        aDistrict.value = districtSel.value; aDistrict.dispatchEvent(new Event('change'));
-        aMunicipality.value = municipalitySel.value;
-      }
-    }else{
-      $('adminForm').classList.add('hide');
-      adminMsg.textContent = 'Wrong password.';
-    }
+    fillSelect(municipalitySel, HIER.municipalitiesByDistrict[d]||[], 'Select municipality');
+  });
+  municipalitySel.addEventListener('change', ()=>{
+    const m = municipalitySel.value; authorityLabel.textContent = m ? (m + ' authority') : '— not set';
   });
 
-  $('btnAddDonor').addEventListener('click', async ()=>{
-    if($('adminPass').value!==ADMIN_PASSWORD){ adminMsg.textContent='Unlock admin first.'; return; }
-    const p=aProvince.value, d=aDistrict.value, m=aMunicipality.value;
-    const name=$('aName').value.trim();
-    const phone=$('aPhone').value.trim();
-    const blood=$('aBlood').value;
-    if(!p||!d||!m||!name||!phone){ adminMsg.textContent='Please complete all fields.'; return; }
-    try{
-    await addDonor({province:p,district:d,municipality:m,name,phone,blood});
-    $('aName').value=''; $('aPhone').value='';
-    adminMsg.textContent = `Donor added to ${m}, ${d}.`;
-    if(districtSel.value===d && municipalitySel.value===m){ await renderDonors(); }
-  }catch(e){
-    adminMsg.textContent = 'Failed to add donor: ' + e.message;
+  aProvince.addEventListener('change', ()=>{
+    const p=aProvince.value; fillSelect(aDistrict, HIER.districtsByProvince[p]||[], 'Select district'); aDistrict.dispatchEvent(new Event('change'));
+  });
+  aDistrict.addEventListener('change', ()=>{
+    const d=aDistrict.value; fillSelect(aMunicipality, HIER.municipalitiesByDistrict[d]||[], 'Select municipality');
+  });
+
+  // Preselect first entries so dropdowns show data immediately
+  if(HIER.provinces.length){
+    provinceSel.value = HIER.provinces[0]; provinceSel.dispatchEvent(new Event('change'));
+    const fd = (HIER.districtsByProvince[provinceSel.value]||[])[0]; if(fd){ districtSel.value = fd; districtSel.dispatchEvent(new Event('change')); }
+    const fm = (HIER.municipalitiesByDistrict[districtSel.value]||[])[0]; if(fm){ municipalitySel.value = fm; municipalitySel.dispatchEvent(new Event('change')); }
+    aProvince.value = provinceSel.value; aProvince.dispatchEvent(new Event('change'));
+    aDistrict.value = districtSel.value; aDistrict.dispatchEvent(new Event('change'));
+    aMunicipality.value = municipalitySel.value;
   }
+}
+
+// === API Calls ===
+async function listDonorsAPI(district, municipality, blood){
+  const params = new URLSearchParams({action:'list', district, municipality});
+  if(blood) params.append('blood', blood);
+  const res = await fetch(`${API_URL}?${params.toString()}`, { method:'GET' });
+  const txt = await res.text(); let json = null; try{ json = JSON.parse(txt); }catch{}
+  if(!res.ok) throw new Error('HTTP ' + res.status);
+  if(!json || json.ok !== true) throw new Error((json && (json.error||json.message)) || txt || 'Server error');
+  return json.donors || [];
+}
+
+async function addDonorAPI(payload, adminKey){
+  if(!adminKey) throw new Error('Admin key required.');
+  const body = new URLSearchParams({action:'add', admin_key: adminKey,
+    province: payload.province, district: payload.district, municipality: payload.municipality,
+    name: payload.name, phone: payload.phone, blood: payload.blood});
+  const res = await fetch(API_URL, { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body });
+  const txt = await res.text(); let json = null; try{ json = JSON.parse(txt); }catch{}
+  if(!json || json.ok !== true){ throw new Error(json ? (json.error||json.message||'Add failed') : txt); }
+  return true;
+}
+
+// === Render ===
+function renderDonors(){
+  const p = provinceSel.value, d = districtSel.value, m = municipalitySel.value, bg = bloodSel.value;
+  if(!p || !d || !m){ donorsBody.innerHTML = '<tr><td colspan="5" class="muted">Select province, district and municipality first.</td></tr>'; summaryPill.textContent = 'Ready'; return; }
+  donorsBody.innerHTML = '<tr><td colspan="5" class="muted">Loading…</td></tr>';
+  listDonorsAPI(d, m, bg).then(rows=>{
+    if(!Array.isArray(rows)) rows = [];
+    if(rows.length===0){ donorsBody.innerHTML = `<tr><td colspan="5" class="warn">No donors yet for ${m}, ${d}. Use Admin to add donors.</td></tr>`; }
+    else{ donorsBody.innerHTML = rows.map(r=>`<tr>
+      <td>${escapeHtml(r.name||'')}</td>
+      <td><a href="tel:${escapeHtml(r.phone||'')}">${escapeHtml(r.phone||'')}</a></td>
+      <td>${escapeHtml(r.blood||'')}</td>
+      <td>${escapeHtml(r.municipality||'')}</td>
+      <td>${escapeHtml(r.district||'')}</td>
+    </tr>`).join(''); }
+    summaryPill.textContent = rows.length + ' match' + (rows.length===1?'':'es');
+  }).catch(err=>{ donorsBody.innerHTML = `<tr><td colspan="5" class="warn">Error: ${escapeHtml(err.message||String(err))}</td></tr>`; summaryPill.textContent = '—'; });
+}
+
+// === Admin ===
+const adminMsg = $('adminMsg');
+$('btnAddDonor').addEventListener('click', async ()=>{
+  const key = $('adminPass').value.trim(); if(!key){ adminMsg.textContent='Enter admin key.'; return; }
+  const p=aProvince.value, d=aDistrict.value, m=aMunicipality.value;
+  const name=$('aName').value.trim(); const phone=$('aPhone').value.trim(); const blood=$('aBlood').value;
+  if(!p||!d||!m||!name||!phone){ adminMsg.textContent='Please complete all fields.'; return; }
+  adminMsg.textContent='Saving…';
+  try{ await addDonorAPI({province:p,district:d,municipality:m,name,phone,blood}, key); $('aName').value=''; $('aPhone').value=''; adminMsg.textContent=`Donor added to ${m}, ${d}.`; if(districtSel.value===d && municipalitySel.value===m){ renderDonors(); } }
+  catch(err){ adminMsg.textContent = 'Error: ' + (err.message||String(err)); }
 });
 
-  $('btnExport').addEventListener('click', async ()=>{
-    const data = await loadAllDonors();
-    const blob = new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href=url; a.download='nyfn-donors.json'; a.click();
-    setTimeout(()=>URL.revokeObjectURL(url),5000);
-  });
+// === Boot ===
+(async function init(){
+  try{
+    summaryPill.textContent = 'Loading map…';
+    await loadCSV();
+    bootSelectors();
+    summaryPill.textContent = 'Ready';
+  }catch(err){
+    console.error(err);
+    summaryPill.textContent = 'Map failed to load';
+    alert('Could not load the CSV. Make sure province_district_municipality.csv is in the same folder as this HTML (and use a local web server).');
+  }
+})();
 
-  $('btnImport').addEventListener('click', ()=> $('importFile').click());
-  $('importFile').addEventListener('change', (e)=>{
-    const file = e.target.files?.[0]; if(!file) return;
-    const reader = new FileReader(); reader.onload = async ()=>{
-      try{
-        const data = JSON.parse(reader.result);
-        if(Array.isArray(data)){
-          try{
-            await saveAllDonors(data);
-            adminMsg.textContent='Imported donor list successfully.';
-            await renderDonors();
-          }catch(e){ adminMsg.textContent='Import failed: '+e.message; }
-        } else { adminMsg.textContent='Invalid JSON format.'; }
-      } catch { adminMsg.textContent='Failed to parse JSON.'; }
-    }; reader.readAsText(file);
-  });
-
-  // -------------- Boot ---------------
-  bootSelectors();
-  // Preselect Bagmati/Kathmandu as a sensible default for users in KTM valley
-  provinceSel.value = 'Bagmati'; provinceSel.dispatchEvent(new Event('change'));
-  districtSel.value = 'Kathmandu'; districtSel.dispatchEvent(new Event('change'));
-
-  // -------------- Tiny self-test (console) ---------------
-  console.log('[NYFN] Districts parsed:', Object.keys(districtToMunicipalities).length);
-  console.log('[NYFN] Kathmandu municipalities sample:', districtToMunicipalities['Kathmandu']?.slice(0,6));
+// Events
+$('btnShow').addEventListener('click', renderDonors);
 </script>
-
 </body>
 </html>
