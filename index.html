@@ -19,21 +19,21 @@
     select,input,button{width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:10px;font-size:14px;background:#fff}
     select:focus,input:focus,button:focus{outline:3px solid rgba(225,29,72,.2);border-color:var(--nyfn)}
     button{cursor:pointer;background:var(--nyfn);color:#fff;border-color:var(--nyfn)}
-    button.secondary{background:#fff;color:var(--ink);border-color:#cbd5e1}
     .muted{color:var(--muted)}.ok{color:var(--ok)}.warn{color:var(--warn)}
     .stack{display:flex;gap:10px;flex-wrap:wrap}.stack>*{flex:1 1 180px}
     table{width:100%;border-collapse:collapse;font-size:14px}th,td{padding:10px;border-bottom:1px solid #e2e8f0;text-align:left}
     th{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
     .pill{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border-radius:999px;border:1px solid #e2e8f0;background:#fff;font-size:12px}
-    .footer{color:var(--muted);font-size:12px;margin-top:18px}.hide{display:none}.inline{display:inline}
+    .footer{color:var(--muted);font-size:12px;margin-top:18px}
     details.debug{margin-top:12px}
-    details.debug pre{background:#0b1020;color:#e5e7eb;padding:10px;border-radius:10px;overflow:auto;max-height:200px}
+    details.debug pre{background:#0b1020;color:#e5e7eb;padding:10px;border-radius:10px;overflow:auto;max-height:220px}
   </style>
-  <!-- CSV parser (reliable for quoted commas). -->
+  <!-- CSV parser for robust quoted/commas handling -->
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js" defer></script>
 </head>
 <body>
 <header><div class="wrap"><h1><span class="badge">NYFN</span> Blood Donor Connect <span class="muted" style="font-weight:500">— CSV-linked</span></h1></div></header>
+
 <main class="wrap" style="padding-block:18px">
   <section class="grid cols-3">
     <div class="card"><label for="province">Province</label><select id="province"></select></div>
@@ -71,7 +71,7 @@
 
   <section class="card" style="margin-top:12px">
     <details open><summary><strong>Admin</strong> — add a single donor</summary>
-      <p class="footer" style="margin-top:6px">Only the admin key is required to add a donor. Regular users do not need it.</p>
+      <p class="footer">Only the admin key is required to add a donor. Regular users do not need it.</p>
       <div class="grid cols-3" style="margin-top:10px">
         <div><label for="adminPass">Admin key</label><input id="adminPass" type="password" placeholder="Enter admin key"/></div>
       </div>
@@ -106,13 +106,13 @@
 
 <script>
 // === Config ===
-const API_URL = "https://script.google.com/macros/s/AKfycbxS61tz3MCATzvFBP21oFm9eT5WiEumy7qV3212zCPykUWSFf9erlSRkxLQ1ubL86cBqQ/exec"; // fixed
+const API_URL = "https://script.google.com/macros/s/AKfycbxS61tz3MCATzvFBP21oFm9eT5WiEumy7qV3212zCPykUWSFf9erlSRkxLQ1ubL86cBqQ/exec";
 const CSV_PATH = "./province_district_municipality.csv"; // keep next to index.html
 
 // === DOM helpers ===
 const $ = (id)=>document.getElementById(id);
 function fillSelect(el, values, placeholder){
-  el.innerHTML=''; 
+  el.innerHTML='';
   if(placeholder){const o=document.createElement('option');o.value='';o.textContent=placeholder;el.appendChild(o);}
   (values||[]).forEach(v=>{const opt=document.createElement('option');opt.value=opt.textContent=v;el.appendChild(opt);});
 }
@@ -120,259 +120,4 @@ function escapeHtml(s){return (s||'').replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&
 
 // === Elements ===
 const provinceSel=$('province'), districtSel=$('district'), municipalitySel=$('municipality'), bloodSel=$('blood');
-const donorsBody=$('donorsBody'), summaryPill=$('summaryPill'), authorityLabel=$('authorityLabel');
-const aProvince=$('aProvince'), aDistrict=$('aDistrict'), aMunicipality=$('aMunicipality');
-const dbgInfo=$('dbgInfo'), dbgOut=$('dbgOut');
-
-// === State built from CSV ===
-let HIER = { provinces: [], districtsByProvince: {}, municipalitiesByDistrict: {} };
-
-// === Load CSV (works on GitHub Pages + any local HTTP server) ===
-async function loadCSV(){
-  if(typeof Papa === 'undefined'){
-    await new Promise((resolve)=>{document.addEventListener('DOMContentLoaded', resolve, {once:true});});
-  }
-  const res = await fetch(CSV_PATH, {cache:'no-store'});
-  if(!res.ok){ throw new Error('CSV fetch failed: ' + res.status); }
-  const csvText = await res.text();
-  const parsed = Papa.parse(csvText, { header:true, skipEmptyLines:true });
-  const rows = parsed.data.map(r=>({
-    province: String(r.province||r.Province||r.PROVINCE||'').trim(),
-    district: String(r.district||r.District||r.DISTRICT||'').trim(),
-    municipality: String(r.municipality||r.Municipality||r.MUNICIPALITY||'').trim(),
-  })).filter(r=>r.province && r.district && r.municipality);
-
-  const provinces = []; const seenP = new Set();
-  const districtsByProvince = {}; const municipalitiesByDistrict = {};
-
-  for(const r of rows){
-    if(!seenP.has(r.province)){
-      seenP.add(r.province);
-      provinces.push(r.province);
-      districtsByProvince[r.province] = districtsByProvince[r.province] || [];
-    }
-    const dlist = districtsByProvince[r.province];
-    if(!dlist.includes(r.district)) dlist.push(r.district);
-    const mlist = municipalitiesByDistrict[r.district] || (municipalitiesByDistrict[r.district] = []);
-    if(!mlist.includes(r.municipality)) mlist.push(r.municipality);
-  }
-  HIER = { provinces, districtsByProvince, municipalitiesByDistrict };
-}
-
-// === Populate selectors ===
-function bootSelectors(){
-  fillSelect(provinceSel, HIER.provinces, 'Select province');
-  fillSelect(aProvince, HIER.provinces, 'Select province');
-
-  // Province → District
-  provinceSel.addEventListener('change', ()=>{
-    const p = provinceSel.value;
-    fillSelect(districtSel, HIER.districtsByProvince[p]||[], 'Select district');
-    // Municipality defaults to Any (district-wide)
-    fillSelect(municipalitySel, [], 'Any (district-wide)');
-  });
-
-  // District → Municipality
-  districtSel.addEventListener('change', ()=>{
-    const d = districtSel.value;
-    // User search: show "Any" first, then real municipalities
-    const munis = HIER.municipalitiesByDistrict[d]||[];
-    fillSelect(municipalitySel, munis, 'Any (district-wide)'); // empty value = district-wide
-    municipalitySel.value = ''; // default to district-wide
-  });
-
-  municipalitySel.addEventListener('change', ()=>{
-    const m = municipalitySel.value;
-    authorityLabel.textContent = m ? (m + ' authority') : '— not set';
-  });
-
-  // Admin mirrors (no "Any" option)
-  aProvince.addEventListener('change', ()=>{
-    const p=aProvince.value; fillSelect(aDistrict, HIER.districtsByProvince[p]||[], 'Select district'); aDistrict.dispatchEvent(new Event('change'));
-  });
-  aDistrict.addEventListener('change', ()=>{
-    const d=aDistrict.value; fillSelect(aMunicipality, HIER.municipalitiesByDistrict[d]||[], 'Select municipality');
-  });
-
-  // Preselect first entries; municipality stays "Any"
-  if(HIER.provinces.length){
-    provinceSel.value = HIER.provinces[0]; provinceSel.dispatchEvent(new Event('change'));
-    const fd = (HIER.districtsByProvince[provinceSel.value]||[])[0];
-    if(fd){ districtSel.value = fd; districtSel.dispatchEvent(new Event('change')); }
-    // admin mirrors
-    aProvince.value = provinceSel.value; aProvince.dispatchEvent(new Event('change'));
-    aDistrict.value = districtSel.value; aDistrict.dispatchEvent(new Event('change'));
-  }
-}
-
-// ------------------ Utilities to normalize API responses ------------------
-function _toArray(x){
-  if(Array.isArray(x)) return x;
-  if(x==null) return [];
-  if(typeof x==='string'){
-    const s=x.trim().toLowerCase();
-    if(s===''||s==='null'||s==='undefined') return [];
-    try{ return _toArray(JSON.parse(x)); }catch{ return []; }
-  }
-  if(typeof x==='object'){
-    const vals = Object.values(x);
-    if(vals.length && vals.every(v => v && typeof v==='object' && !Array.isArray(v))) return vals;
-  }
-  return [];
-}
-function _normalizeRows(json){
-  if(Array.isArray(json)) return json;
-  if(json && Array.isArray(json.donors)) return json.donors;
-  if(json && Array.isArray(json.data))   return json.data;
-  if(json && Array.isArray(json.rows))   return json.rows;
-  return _toArray(json);
-}
-function _mapRow(r, fb){
-  const o=(r&&typeof r==='object')?r:{};
-  const phone = o.phone ?? o.Phone ?? o.PHONE ?? o.phone_number ?? o.contact ?? '';
-  const blood = o.blood ?? o.Blood ?? o.BLOOD ?? o.blood_group ?? '';
-  return {
-    name:         o.name ?? o.Name ?? o.NAME ?? '',
-    phone,
-    blood,
-    municipality: o.municipality ?? o.Municipality ?? o.MUNICIPALITY ?? (fb.municipality || ''),
-    district:     o.district ?? o.District ?? o.DISTRICT ?? (fb.district || '')
-  };
-}
-
-// ------------------ API Calls ------------------
-// District-wide by default: send municipality only if chosen (non-empty)
-async function _callListOnce(q){
-  const params = new URLSearchParams({ action:'list' });
-  if(q.province)     params.append('province', q.province);
-  if(q.district)     params.append('district', q.district);
-  if(q.municipality) params.append('municipality', q.municipality);
-  if(q.blood)        params.append('blood', q.blood);
-
-  const url = `${API_URL}?${params.toString()}`;
-  let res, txt, json=null;
-  try{
-    res = await fetch(url, { method:'GET', cache:'no-store' });
-    txt = await res.text();
-  }catch{
-    return [];
-  }
-  if(dbgInfo){ dbgInfo.textContent = `GET ${url} — ${res.status} (${(txt||'').length} bytes)`; }
-  if(dbgOut){ dbgOut.textContent = (txt||'').slice(0,5000); }
-
-  if(!res.ok) return [];
-  try{ json = JSON.parse(txt); }catch{}
-  const rows = _normalizeRows(json);
-  return rows.map(r => _mapRow(r, {district:q.district, municipality:q.municipality}));
-}
-
-// Explicit province; trims values; with smart fallbacks
-async function listDonorsAPI(province, district, municipality, blood){
-  const P=(province||'').trim(), D=(district||'').trim(), M=(municipality||'').trim(), B=(blood||'').trim();
-
-  // Strict (province+district+[municipality]+[blood])
-  let rows = await _callListOnce({province:P, district:D, municipality:M, blood:B});
-  if(rows.length) return rows;
-
-  // Some scripts ignore province; try district+[municipality]+[blood]
-  rows = await _callListOnce({district:D, municipality:M, blood:B});
-  if(rows.length) return rows;
-
-  // District only + blood
-  rows = await _callListOnce({district:D, blood:B});
-  if(rows.length) return rows;
-
-  // If blood narrowed out, retry without blood
-  if(B){
-    rows = await _callListOnce({province:P, district:D, municipality:M});
-    if(rows.length) return rows;
-    rows = await _callListOnce({district:D, municipality:M});
-    if(rows.length) return rows;
-    rows = await _callListOnce({district:D});
-    if(rows.length) return rows;
-  }
-  return [];
-}
-
-async function addDonorAPI(payload, adminKey){
-  if(!adminKey) throw new Error('Admin key required.');
-  const body = new URLSearchParams({
-    action:'add', admin_key:adminKey,
-    province:payload.province, district:payload.district, municipality:payload.municipality,
-    name:payload.name, phone:payload.phone, blood:payload.blood
-  });
-  const res = await fetch(API_URL, { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body });
-  const txt = await res.text(); let json=null; try{ json = JSON.parse(txt); }catch{}
-  const ok = json && (json.ok===true || json.ok===1 || json.ok==='true' || json.status==='ok');
-  if(!ok) throw new Error(json ? (json.error||json.message||'Add failed') : txt);
-  return true;
-}
-
-// ------------------ Render ------------------
-function renderDonors(){
-  const p=provinceSel.value, d=districtSel.value, m=municipalitySel.value, bg=bloodSel.value;
-  if(!p || !d){
-    donorsBody.innerHTML = '<tr><td colspan="5" class="muted">Select province and district first.</td></tr>';
-    summaryPill.textContent = 'Ready';
-    return;
-  }
-  donorsBody.innerHTML = '<tr><td colspan="5" class="muted">Loading…</td></tr>';
-  listDonorsAPI(p,d,m,bg).then(rows=>{
-    if(!Array.isArray(rows)) rows=[];
-    const muniLabel = m || 'any municipality';
-    if(rows.length===0){
-      donorsBody.innerHTML = `<tr><td colspan="5" class="warn">No donors found for ${muniLabel}, ${d}.</td></tr>`;
-    }else{
-      donorsBody.innerHTML = rows.map(r=>`
-        <tr>
-          <td>${escapeHtml(r.name||'')}</td>
-          <td><a href="tel:${escapeHtml(r.phone||'')}">${escapeHtml(r.phone||'')}</a></td>
-          <td>${escapeHtml(r.blood||'')}</td>
-          <td>${escapeHtml(r.municipality||'')}</td>
-          <td>${escapeHtml(r.district||'')}</td>
-        </tr>`).join('');
-    }
-    summaryPill.textContent = rows.length + ' match' + (rows.length===1?'':'es');
-  }).catch(()=>{
-    donorsBody.innerHTML = '<tr><td colspan="5" class="warn">No donors found.</td></tr>';
-    summaryPill.textContent = '—';
-  });
-}
-
-// === Admin ===
-const adminMsg = $('adminMsg');
-$('btnAddDonor').addEventListener('click', async ()=>{
-  const key = $('adminPass').value.trim(); if(!key){ adminMsg.textContent='Enter admin key.'; return; }
-  const p=aProvince.value, d=aDistrict.value, m=aMunicipality.value;
-  const name=$('aName').value.trim(); const phone=$('aPhone').value.trim(); const blood=$('aBlood').value;
-  if(!p||!d||!m||!name||!phone){ adminMsg.textContent='Please complete all fields.'; return; }
-  adminMsg.textContent='Saving…';
-  try{
-    await addDonorAPI({province:p,district:d,municipality:m,name,phone,blood}, key);
-    $('aName').value=''; $('aPhone').value='';
-    adminMsg.textContent=`Donor added to ${m}, ${d}.`;
-    if(districtSel.value===d && (municipalitySel.value===m || municipalitySel.value==='')) renderDonors();
-  }catch(err){
-    adminMsg.textContent = 'Error: ' + (err.message||String(err));
-  }
-});
-
-// === Boot ===
-(async function init(){
-  try{
-    summaryPill.textContent = 'Loading map…';
-    await loadCSV();
-    bootSelectors();
-    summaryPill.textContent = 'Ready';
-  }catch(err){
-    console.error(err);
-    summaryPill.textContent = 'Map failed to load';
-    alert('Could not load the CSV. Make sure province_district_municipality.csv is in the same folder as this HTML (and use a local web server).');
-  }
-})();
-
-// Events
-$('btnShow').addEventListener('click', renderDonors);
-</script>
-</body>
-</html>
+const donorsBody=$('donorsBody'), summar
