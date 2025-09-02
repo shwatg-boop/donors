@@ -183,6 +183,29 @@ function bootSelectors(){
   }
 }
 
+  // BEFORE:
+// async function listDonorsAPI(district, municipality, blood) {
+
+async function listDonorsAPI(province, district, municipality, blood) {
+  const params = new URLSearchParams({
+    action: 'list',
+    province:      province      || '',
+    district:      district      || '',
+    municipality:  municipality  || ''
+  });
+  if (blood) params.append('blood', blood);
+
+  const res = await fetch(`${API_URL}?${params.toString()}`, { method: 'GET' });
+  const txt = await res.text();
+  let json = null; try { json = JSON.parse(txt); } catch {}
+
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  if (!json || json.ok !== true) {
+    throw new Error((json && (json.error || json.message)) || txt || 'Server error');
+  }
+  return json.donors || [];
+}
+
 // Robust list: tolerate donors:null, array, {donors[]}, {data[]}, {rows[]}, {0:{},1:{}}…
 async function listDonorsAPI(district, municipality, blood) {
   // Always include province from the UI selection
@@ -242,7 +265,7 @@ function renderDonors() {
     return;
   }
   donorsBody.innerHTML = '<tr><td colspan="5" class="muted">Loading…</td></tr>';
-  listDonorsAPI(d, m, bg).then(rows => {
+  listDonorsAPI(p, d, m, bg).then(rows => {
     if (!Array.isArray(rows)) rows = [];
     if (rows.length === 0) {
       donorsBody.innerHTML =
