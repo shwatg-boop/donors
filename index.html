@@ -185,71 +185,33 @@ function bootSelectors(){
 
 // Robust list: tolerate donors:null, array, {donors[]}, {data[]}, {rows[]}, {0:{},1:{}}…
 async function listDonorsAPI(district, municipality, blood) {
-  const params = new URLSearchParams({ action: 'list' });
-  if (district)     params.append('district', district);
-  if (municipality) params.append('municipality', municipality);
-  if (blood)        params.append('blood', blood);
+  // Always include province from the UI selection
+  const province = provinceSel && provinceSel.value ? provinceSel.value : "";
 
-  const url = `${API_URL}?${params.toString()}`;
+  const params = new URLSearchParams({
+    action: "list",
+    province: province,          // ← FIX: include province
+    district: district || "",    // keep existing behavior
+    municipality: municipality || ""
+  });
+  if (blood) params.append("blood", blood);
 
-  let res, txt;
-  try {
-    res = await fetch(url, { method: 'GET', cache: 'no-store' });
-    txt = await res.text();
-  } catch {
-    // Network or transient error → treat as empty; do not crash UI
-    return [];
-  }
-  if (!res.ok) return [];
+  const res = await fetch(`${API_URL}?${params.toString()}`, { method: "GET" });
+  const txt = await res.text();
 
-  // Try JSON, but don’t require it
   let json = null;
   try { json = JSON.parse(txt); } catch {}
 
-  // Helpers
-  const toArray = (x) => {
-    if (Array.isArray(x)) return x;
-    if (x == null) return [];
-    if (typeof x === 'string') {
-      const s = x.trim().toLowerCase();
-      if (s === '' || s === 'null' || s === 'undefined') return [];
-      try { return toArray(JSON.parse(x)); } catch { return []; }
-    }
-    if (typeof x === 'object') {
-      // Convert objects keyed by indices → [{…},{…}]
-      const vals = Object.values(x);
-      if (vals.length && vals.every(v => v && typeof v === 'object' && !Array.isArray(v))) return vals;
-    }
-    return [];
-  };
-  const pickFirstNonEmpty = (...cands) => {
-    for (const c of cands) {
-      const a = toArray(c);
-      if (a.length) return a;
-    }
-    // If none non-empty, return the last candidate normalized (may be [])
-    return toArray(cands[cands.length - 1]);
-  };
+  if (!res.ok) throw new Error("HTTP " + res.status);
 
-  const rows = pickFirstNonEmpty(
-    json && json.donors,
-    json && json.data,
-    json && json.rows,
-    Array.isArray(json) ? json : []
-  );
+  // Keep your original contract (expects { ok:true, donors:[...] })
+  if (!json || json.ok !== true) {
+    throw new Error((json && (json.error || json.message)) || txt || "Server error");
+  }
 
-  // Normalize field names for rendering
-  return rows.map(r => {
-    const o = (r && typeof r === 'object') ? r : {};
-    return {
-      name:         o.name ?? o.Name ?? o.NAME ?? '',
-      phone:        o.phone ?? o.Phone ?? o.PHONE ?? '',
-      blood:        o.blood ?? o.Blood ?? o.BLOOD ?? '',
-      municipality: o.municipality ?? o.Municipality ?? o.MUNICIPALITY ?? (municipality || ''),
-      district:     o.district ?? o.District ?? o.DISTRICT     ?? (district || ''),
-    };
-  });
+  return json.donors || [];
 }
+
 
 // Keep POST add as-is but slightly more tolerant about ok/status
 async function addDonorAPI(payload, adminKey) {
