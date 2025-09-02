@@ -183,45 +183,123 @@ function bootSelectors(){
   }
 }
 
-// === API Calls ===
-async function listDonorsAPI(district, municipality, blood){
-  const params = new URLSearchParams({action:'list', district, municipality});
-  if(blood) params.append('blood', blood);
-  const res = await fetch(`${API_URL}?${params.toString()}`, { method:'GET' });
-  const txt = await res.text(); let json = null; try{ json = JSON.parse(txt); }catch{}
-  if(!res.ok) throw new Error('HTTP ' + res.status);
-  if(!json || json.ok !== true) throw new Error((json && (json.error||json.message)) || txt || 'Server error');
-  return json.donors || [];
+// Robust list: tolerate donors:null, array, {donors[]}, {data[]}, {rows[]}, {0:{},1:{}}…
+async function listDonorsAPI(district, municipality, blood) {
+  const params = new URLSearchParams({ action: 'list' });
+  if (district)     params.append('district', district);
+  if (municipality) params.append('municipality', municipality);
+  if (blood)        params.append('blood', blood);
+
+  const url = `${API_URL}?${params.toString()}`;
+
+  let res, txt;
+  try {
+    res = await fetch(url, { method: 'GET', cache: 'no-store' });
+    txt = await res.text();
+  } catch {
+    // Network or transient error → treat as empty; do not crash UI
+    return [];
+  }
+  if (!res.ok) return [];
+
+  // Try JSON, but don’t require it
+  let json = null;
+  try { json = JSON.parse(txt); } catch {}
+
+  // Helpers
+  const toArray = (x) => {
+    if (Array.isArray(x)) return x;
+    if (x == null) return [];
+    if (typeof x === 'string') {
+      const s = x.trim().toLowerCase();
+      if (s === '' || s === 'null' || s === 'undefined') return [];
+      try { return toArray(JSON.parse(x)); } catch { return []; }
+    }
+    if (typeof x === 'object') {
+      // Convert objects keyed by indices → [{…},{…}]
+      const vals = Object.values(x);
+      if (vals.length && vals.every(v => v && typeof v === 'object' && !Array.isArray(v))) return vals;
+    }
+    return [];
+  };
+  const pickFirstNonEmpty = (...cands) => {
+    for (const c of cands) {
+      const a = toArray(c);
+      if (a.length) return a;
+    }
+    // If none non-empty, return the last candidate normalized (may be [])
+    return toArray(cands[cands.length - 1]);
+  };
+
+  const rows = pickFirstNonEmpty(
+    json && json.donors,
+    json && json.data,
+    json && json.rows,
+    Array.isArray(json) ? json : []
+  );
+
+  // Normalize field names for rendering
+  return rows.map(r => {
+    const o = (r && typeof r === 'object') ? r : {};
+    return {
+      name:         o.name ?? o.Name ?? o.NAME ?? '',
+      phone:        o.phone ?? o.Phone ?? o.PHONE ?? '',
+      blood:        o.blood ?? o.Blood ?? o.BLOOD ?? '',
+      municipality: o.municipality ?? o.Municipality ?? o.MUNICIPALITY ?? (municipality || ''),
+      district:     o.district ?? o.District ?? o.DISTRICT     ?? (district || ''),
+    };
+  });
 }
 
-async function addDonorAPI(payload, adminKey){
-  if(!adminKey) throw new Error('Admin key required.');
-  const body = new URLSearchParams({action:'add', admin_key: adminKey,
+// Keep POST add as-is but slightly more tolerant about ok/status
+async function addDonorAPI(payload, adminKey) {
+  if (!adminKey) throw new Error('Admin key required.');
+  const body = new URLSearchParams({
+    action: 'add', admin_key: adminKey,
     province: payload.province, district: payload.district, municipality: payload.municipality,
-    name: payload.name, phone: payload.phone, blood: payload.blood});
-  const res = await fetch(API_URL, { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body });
-  const txt = await res.text(); let json = null; try{ json = JSON.parse(txt); }catch{}
-  if(!json || json.ok !== true){ throw new Error(json ? (json.error||json.message||'Add failed') : txt); }
+    name: payload.name, phone: payload.phone, blood: payload.blood
+  });
+  const res = await fetch(API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body
+  });
+  const txt = await res.text();
+  let json = null; try { json = JSON.parse(txt); } catch {}
+  const ok = json && (json.ok === true || json.ok === 1 || json.ok === 'true' || json.status === 'ok');
+  if (!ok) throw new Error(json ? (json.error || json.message || 'Add failed') : txt);
   return true;
 }
 
-// === Render ===
-function renderDonors(){
+// Allow search without forcing municipality; never crash on errors
+function renderDonors() {
   const p = provinceSel.value, d = districtSel.value, m = municipalitySel.value, bg = bloodSel.value;
-  if(!p || !d || !m){ donorsBody.innerHTML = '<tr><td colspan="5" class="muted">Select province, district and municipality first.</td></tr>'; summaryPill.textContent = 'Ready'; return; }
+  if (!p || !d) {
+    donorsBody.innerHTML = '<tr><td colspan="5" class="muted">Select province and district first.</td></tr>';
+    summaryPill.textContent = 'Ready';
+    return;
+  }
   donorsBody.innerHTML = '<tr><td colspan="5" class="muted">Loading…</td></tr>';
-  listDonorsAPI(d, m, bg).then(rows=>{
-    if(!Array.isArray(rows)) rows = [];
-    if(rows.length===0){ donorsBody.innerHTML = `<tr><td colspan="5" class="warn">No donors yet for ${m}, ${d}. Use Admin to add donors.</td></tr>`; }
-    else{ donorsBody.innerHTML = rows.map(r=>`<tr>
-      <td>${escapeHtml(r.name||'')}</td>
-      <td><a href="tel:${escapeHtml(r.phone||'')}">${escapeHtml(r.phone||'')}</a></td>
-      <td>${escapeHtml(r.blood||'')}</td>
-      <td>${escapeHtml(r.municipality||'')}</td>
-      <td>${escapeHtml(r.district||'')}</td>
-    </tr>`).join(''); }
-    summaryPill.textContent = rows.length + ' match' + (rows.length===1?'':'es');
-  }).catch(err=>{ donorsBody.innerHTML = `<tr><td colspan="5" class="warn">Error: ${escapeHtml(err.message||String(err))}</td></tr>`; summaryPill.textContent = '—'; });
+  listDonorsAPI(d, m, bg).then(rows => {
+    if (!Array.isArray(rows)) rows = [];
+    if (rows.length === 0) {
+      donorsBody.innerHTML =
+        `<tr><td colspan="5" class="warn">No donors found for ${m || 'any municipality'}, ${d}.</td></tr>`;
+    } else {
+      donorsBody.innerHTML = rows.map(r => `
+        <tr>
+          <td>${escapeHtml(r.name || '')}</td>
+          <td><a href="tel:${escapeHtml(r.phone || '')}">${escapeHtml(r.phone || '')}</a></td>
+          <td>${escapeHtml(r.blood || '')}</td>
+          <td>${escapeHtml(r.municipality || '')}</td>
+          <td>${escapeHtml(r.district || '')}</td>
+        </tr>`).join('');
+    }
+    summaryPill.textContent = rows.length + ' match' + (rows.length === 1 ? '' : 'es');
+  }).catch(() => {
+    donorsBody.innerHTML = '<tr><td colspan="5" class="warn">No donors found.</td></tr>';
+    summaryPill.textContent = '—';
+  });
 }
 
 // === Admin ===
