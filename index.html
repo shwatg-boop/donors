@@ -183,16 +183,48 @@ function bootSelectors(){
   }
 }
 
-// === API Calls ===
+<script>
 async function listDonorsAPI(district, municipality, blood){
-  const params = new URLSearchParams({action:'list', district, municipality});
-  if(blood) params.append('blood', blood);
-  const res = await fetch(`${API_URL}?${params.toString()}`, { method:'GET' });
-  const txt = await res.text(); let json = null; try{ json = JSON.parse(txt); }catch{}
-  if(!res.ok) throw new Error('HTTP ' + res.status);
-  if(!json || json.ok !== true) throw new Error((json && (json.error||json.message)) || txt || 'Server error');
-  return json.donors || [];
+  const params = new URLSearchParams({ action:'list' });
+  if (district) params.append('district', district);
+  if (municipality) params.append('municipality', municipality);
+  if (blood) params.append('blood', blood);
+
+  const url = `${API_URL}?${params.toString()}`;
+  const res = await fetch(url, { method:'GET' });
+  const txt = await res.text();
+
+  // OPTIONAL: comment these two lines out if you don't want inline debugging
+  (document.getElementById('dbgInfo')||{}).textContent = `GET ${url} — ${res.status} (${txt.length} bytes)`;
+  (document.getElementById('dbgOut')||{}).textContent  = txt.slice(0, 5000);
+
+  let json = null; try { json = JSON.parse(txt); } catch {}
+  if (!res.ok) throw new Error(`HTTP ${res.status} ${txt}`);
+
+  // Normalize shapes: array OR {donors[]} OR {data[]} OR {rows[]}
+  let rows = [];
+  if (Array.isArray(json)) rows = json;
+  else if (json && Array.isArray(json.donors)) rows = json.donors;
+  else if (json && Array.isArray(json.data)) rows = json.data;
+  else if (json && Array.isArray(json.rows)) rows = json.rows;
+
+  // Accept ok: true/"true"/1 or status:"ok", or even missing
+  const isOk = (json==null) || json.ok===true || json.ok==='true' || json.ok===1 || json.status==='ok';
+  if (!isOk && rows.length === 0) {
+    const msg = (json && (json.error || json.message)) || 'Unexpected response';
+    throw new Error(msg);
+  }
+
+  // Map common field casings so UI rendering is stable
+  return rows.map(r => ({
+    name:          r.name ?? r.Name ?? r.NAME ?? '',
+    phone:         r.phone ?? r.Phone ?? r.PHONE ?? '',
+    blood:         r.blood ?? r.Blood ?? r.BLOOD ?? '',
+    municipality:  r.municipality ?? r.Municipality ?? r.MUNICIPALITY ?? (municipality || ''),
+    district:      r.district ?? r.District ?? r.DISTRICT ?? (district || ''),
+  }));
 }
+</script>
 
 async function addDonorAPI(payload, adminKey){
   if(!adminKey) throw new Error('Admin key required.');
