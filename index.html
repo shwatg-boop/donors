@@ -19,6 +19,7 @@
     select,input,button{width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:10px;font-size:14px;background:#fff}
     select:focus,input:focus,button:focus{outline:3px solid rgba(225,29,72,.2);border-color:var(--nyfn)}
     button{cursor:pointer;background:var(--nyfn);color:#fff;border-color:var(--nyfn)}
+    button.secondary{background:#fff;color:var(--ink);border-color:#cbd5e1}
     .muted{color:var(--muted)}.ok{color:var(--ok)}.warn{color:var(--warn)}
     .stack{display:flex;gap:10px;flex-wrap:wrap}.stack>*{flex:1 1 180px}
     table{width:100%;border-collapse:collapse;font-size:14px}th,td{padding:10px;border-bottom:1px solid #e2e8f0;text-align:left}
@@ -26,10 +27,10 @@
     .pill{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border-radius:999px;border:1px solid #e2e8f0;background:#fff;font-size:12px}
     .footer{color:var(--muted);font-size:12px;margin-top:18px}
     details.debug{margin-top:12px}
-    details.debug pre{background:#0b1020;color:#e5e7eb;padding:10px;border-radius:10px;overflow:auto;max-height:260px}
+    details.debug pre{background:#0b1020;color:#e5e7eb;padding:10px;border-radius:10px;overflow:auto;max-height:280px}
     .err{color:#b91c1c}
   </style>
-  <!-- Robust CSV parser -->
+  <!-- Robust CSV parser (handles quoted commas). -->
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js" defer></script>
 </head>
 <body>
@@ -103,19 +104,26 @@
     <div class="footer err" id="csvErr"></div>
   </details>
 
-  <div class="footer" id="footNote">Backend: Apps Script (GET action=list, POST action=add). API is prelinked.</div>
+  <div class="footer" id="footNote">Backend: Apps Script (GET action=list → returns {"ok":true,"rows":[...]}; POST action=add). API is prelinked.</div>
 </main>
 
 <script>
 // === Config ===
 const API_URL = "https://script.google.com/macros/s/AKfycbxS61tz3MCATzvFBP21oFm9eT5WiEumy7qV3212zCPykUWSFf9erlSRkxLQ1ubL86cBqQ/exec";
-const DEFAULT_CSV_PATH = "./province_district_municipality.csv"; // same folder as index.html
 
-// Optional override via URL: ?csv=path/to/file.csv
-function getCsvPath(){
+// CSV auto-discovery (override with ?csv=path)
+const DEFAULT_CSV_NAMES = [
+  "province_district_municipality.csv",
+  "data/province_district_municipality.csv",
+  "assets/province_district_municipality.csv",
+  "csv/province_district_municipality.csv"
+];
+function getCsvCandidates(){
   const u = new URL(location.href);
-  const p = u.searchParams.get("csv");
-  return (p && p.trim()) ? p.trim() : DEFAULT_CSV_PATH;
+  const override = u.searchParams.get("csv");
+  if(override && override.trim()) return [override.trim()];
+  // Try current folder first with default name, then common folders
+  return DEFAULT_CSV_NAMES.map(p=>p);
 }
 
 // === DOM helpers ===
@@ -136,25 +144,48 @@ const dbgInfo=$('dbgInfo'), dbgOut=$('dbgOut'), csvErr=$('csvErr'), adminMsg=$('
 // === State built from CSV ===
 let HIER = { provinces: [], districtsByProvince: {}, municipalitiesByDistrict: {} };
 
-// === CSV loading ===
-async function loadCSV(){
-  // Wait for Papa if not loaded yet
-  if(typeof Papa === 'undefined'){
-    await new Promise((resolve)=>document.addEventListener('DOMContentLoaded', resolve, {once:true}));
+// Wait for Papa (defer script) to be ready
+async function ensurePapa(){
+  for(let i=0;i<80;i++){ // up to ~8s
+    if (window.Papa) return;
+    await new Promise(r=>setTimeout(r,100));
   }
-  const CSV_PATH = getCsvPath();
-  let res, text;
+  throw new Error("PapaParse failed to load.");
+}
+
+// Try multiple CSV paths until one succeeds
+async function fetchFirstCSV(){
+  const candidates = getCsvCandidates();
+  const tried = [];
+  for(const path of candidates){
+    try{
+      const res = await fetch(path, {cache:'no-store'});
+      tried.push(`${path} → ${res.status}`);
+      if(!res.ok) continue;
+      const text = await res.text();
+      return { path, text, tried };
+    }catch(e){
+      tried.push(`${path} → ERR`);
+    }
+  }
+  throw new Error("CSV not found in any candidate paths.\nTried:\n" + tried.join("\n"));
+}
+
+// === Load CSV (works on GitHub Pages + any local HTTP server) ===
+async function loadCSV(){
+  await ensurePapa();
+  let csvText, path, triedList;
   try{
-    res = await fetch(CSV_PATH, {cache:'no-store'});
-    if(!res.ok) throw new Error('HTTP '+res.status);
-    text = await res.text();
+    const {path: p, text, tried} = await fetchFirstCSV();
+    path = p; csvText = text; triedList = tried;
   }catch(err){
-    csvErr.textContent = `CSV fetch failed. Looked for "${CSV_PATH}". Ensure the file name and path (case-sensitive) are correct and that you're serving over HTTP (GitHub Pages or a local server).`;
+    csvErr.textContent = `${err.message}\nTip: Put "province_district_municipality.csv" next to index.html, or pass ?csv=path/to/file.csv`;
     throw err;
   }
 
-  // Parse (BOM-safe, header-insensitive)
-  const parsed = Papa.parse(text, { header:true, skipEmptyLines:true });
+  const parsed = Papa.parse(csvText, {
+    header:true, skipEmptyLines:true, delimiter:"" // auto-detect delimiter
+  });
   if(parsed.errors && parsed.errors.length){
     console.warn('CSV parse warnings', parsed.errors);
   }
@@ -165,10 +196,10 @@ async function loadCSV(){
   })).filter(r=>r.province && r.district && r.municipality);
 
   if(rows.length === 0){
-    csvErr.textContent = 'CSV loaded but contains 0 valid rows. Expected headers: "province,district,municipality" (any case). Check for hidden characters or wrong columns.';
+    csvErr.textContent = `CSV loaded from "${path}" but found 0 valid rows.\n`+
+                         `Expected headers: province,district,municipality (any case).`;
   }
-
-  // Build hierarchy preserving order
+  // Build hierarchy preserving first-seen order
   const provinces = []; const seenP = new Set();
   const districtsByProvince = {}; const municipalitiesByDistrict = {};
   for(const r of rows){
@@ -182,8 +213,19 @@ async function loadCSV(){
     if(!mlist.includes(r.municipality)) mlist.push(r.municipality);
   }
   HIER = { provinces, districtsByProvince, municipalitiesByDistrict };
+
+  // Debug summary
+  if(dbgOut){
+    const counts = Object.values(districtsByProvince).map(a=>a.length).reduce((a,b)=>a+b,0);
+    dbgOut.textContent =
+      `CSV path: ${path}\n`+
+      `Provinces: ${provinces.length}\nDistricts: ${counts}\n`+
+      `Example Province: ${provinces[0]||'-'}\n`+
+      `Tried:\n${(triedList||[]).join('\n')}`;
+  }
 }
 
+// === Populate selectors ===
 function bootSelectors(){
   fillSelect(provinceSel, HIER.provinces, 'Select province');
   fillSelect(aProvince, HIER.provinces, 'Select province');
@@ -219,7 +261,6 @@ function bootSelectors(){
     provinceSel.value = HIER.provinces[0]; provinceSel.dispatchEvent(new Event('change'));
     const fd = (HIER.districtsByProvince[provinceSel.value]||[])[0];
     if(fd){ districtSel.value = fd; districtSel.dispatchEvent(new Event('change')); }
-    // Admin mirrors
     aProvince.value = provinceSel.value; aProvince.dispatchEvent(new Event('change'));
     aDistrict.value = districtSel.value; aDistrict.dispatchEvent(new Event('change'));
   }
@@ -228,7 +269,7 @@ function bootSelectors(){
 // === Response normalization ===
 function _normalizeRows(json){
   if(Array.isArray(json)) return json;
-  if(json && Array.isArray(json.rows))   return json.rows;    // your script
+  if(json && Array.isArray(json.rows))   return json.rows;    // your script shape
   if(json && Array.isArray(json.donors)) return json.donors;
   if(json && Array.isArray(json.data))   return json.data;
   // last resort: {0:{},1:{}} → array
@@ -247,12 +288,12 @@ function _mapRow(r, fb){
     phone,
     blood,
     municipality: String(o.municipality ?? o.Municipality ?? o.MUNICIPALITY ?? (fb.municipality || '')),
-    district:     String(o.district ?? o.District ?? o.DISTRICT ?? (fb.district || ''))
+    district:     String(o.district ?? o.District     ?? o.DISTRICT     ?? (fb.district || ''))
   };
 }
 
 // === API calls ===
-// Match your tester: send district (and municipality if chosen). No province needed for list.
+// Match your tester: send district (and municipality if chosen). No province in list.
 async function listDonorsAPI(district, municipality, blood){
   const D=(district||'').trim(), M=(municipality||'').trim(), B=(blood||'').trim();
   const params = new URLSearchParams({ action:'list' });
@@ -343,15 +384,15 @@ $('btnAddDonor').addEventListener('click', async ()=>{
 (async function init(){
   try{
     summaryPill.textContent = 'Loading map…';
-    await loadCSV();               // builds HIER or shows csvErr if not found/0 rows
-    bootSelectors();               // populates dropdowns
+    await loadCSV();   // builds HIER or shows csvErr with exact reason
+    bootSelectors();   // populates dropdowns
     summaryPill.textContent = 'Ready';
   }catch(err){
     console.error(err);
     summaryPill.textContent = 'Map failed to load';
     if(location.protocol === 'file:'){
       csvErr.textContent = (csvErr.textContent ? csvErr.textContent + ' ' : '')
-        + 'Open via a local server (e.g., "python -m http.server") or GitHub Pages; file:// cannot fetch CSV.';
+        + 'Open via a local server (e.g., python -m http.server) or GitHub Pages; file:// cannot fetch CSV.';
     }
   }
 })();
