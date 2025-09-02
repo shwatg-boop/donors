@@ -26,9 +26,10 @@
     .pill{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border-radius:999px;border:1px solid #e2e8f0;background:#fff;font-size:12px}
     .footer{color:var(--muted);font-size:12px;margin-top:18px}
     details.debug{margin-top:12px}
-    details.debug pre{background:#0b1020;color:#e5e7eb;padding:10px;border-radius:10px;overflow:auto;max-height:220px}
+    details.debug pre{background:#0b1020;color:#e5e7eb;padding:10px;border-radius:10px;overflow:auto;max-height:260px}
+    .err{color:#b91c1c}
   </style>
-  <!-- CSV parser for robust quoted/commas handling -->
+  <!-- Robust CSV parser -->
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js" defer></script>
 </head>
 <body>
@@ -99,6 +100,7 @@
   <details class="debug"><summary>Debug</summary>
     <div class="footer" id="dbgInfo"></div>
     <pre id="dbgOut"></pre>
+    <div class="footer err" id="csvErr"></div>
   </details>
 
   <div class="footer" id="footNote">Backend: Apps Script (GET action=list, POST action=add). API is prelinked.</div>
@@ -107,7 +109,14 @@
 <script>
 // === Config ===
 const API_URL = "https://script.google.com/macros/s/AKfycbxS61tz3MCATzvFBP21oFm9eT5WiEumy7qV3212zCPykUWSFf9erlSRkxLQ1ubL86cBqQ/exec";
-const CSV_PATH = "./province_district_municipality.csv"; // keep next to index.html
+const DEFAULT_CSV_PATH = "./province_district_municipality.csv"; // same folder as index.html
+
+// Optional override via URL: ?csv=path/to/file.csv
+function getCsvPath(){
+  const u = new URL(location.href);
+  const p = u.searchParams.get("csv");
+  return (p && p.trim()) ? p.trim() : DEFAULT_CSV_PATH;
+}
 
 // === DOM helpers ===
 const $ = (id)=>document.getElementById(id);
@@ -120,4 +129,233 @@ function escapeHtml(s){return (s||'').replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&
 
 // === Elements ===
 const provinceSel=$('province'), districtSel=$('district'), municipalitySel=$('municipality'), bloodSel=$('blood');
-const donorsBody=$('donorsBody'), summar
+const donorsBody=$('donorsBody'), summaryPill=$('summaryPill'), authorityLabel=$('authorityLabel');
+const aProvince=$('aProvince'), aDistrict=$('aDistrict'), aMunicipality=$('aMunicipality');
+const dbgInfo=$('dbgInfo'), dbgOut=$('dbgOut'), csvErr=$('csvErr'), adminMsg=$('adminMsg');
+
+// === State built from CSV ===
+let HIER = { provinces: [], districtsByProvince: {}, municipalitiesByDistrict: {} };
+
+// === CSV loading ===
+async function loadCSV(){
+  // Wait for Papa if not loaded yet
+  if(typeof Papa === 'undefined'){
+    await new Promise((resolve)=>document.addEventListener('DOMContentLoaded', resolve, {once:true}));
+  }
+  const CSV_PATH = getCsvPath();
+  let res, text;
+  try{
+    res = await fetch(CSV_PATH, {cache:'no-store'});
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    text = await res.text();
+  }catch(err){
+    csvErr.textContent = `CSV fetch failed. Looked for "${CSV_PATH}". Ensure the file name and path (case-sensitive) are correct and that you're serving over HTTP (GitHub Pages or a local server).`;
+    throw err;
+  }
+
+  // Parse (BOM-safe, header-insensitive)
+  const parsed = Papa.parse(text, { header:true, skipEmptyLines:true });
+  if(parsed.errors && parsed.errors.length){
+    console.warn('CSV parse warnings', parsed.errors);
+  }
+  const rows = (parsed.data||[]).map(r=>({
+    province: String(r.province||r.Province||r.PROVINCE||'').trim(),
+    district: String(r.district||r.District||r.DISTRICT||'').trim(),
+    municipality: String(r.municipality||r.Municipality||r.MUNICIPALITY||'').trim(),
+  })).filter(r=>r.province && r.district && r.municipality);
+
+  if(rows.length === 0){
+    csvErr.textContent = 'CSV loaded but contains 0 valid rows. Expected headers: "province,district,municipality" (any case). Check for hidden characters or wrong columns.';
+  }
+
+  // Build hierarchy preserving order
+  const provinces = []; const seenP = new Set();
+  const districtsByProvince = {}; const municipalitiesByDistrict = {};
+  for(const r of rows){
+    if(!seenP.has(r.province)){
+      seenP.add(r.province); provinces.push(r.province);
+      districtsByProvince[r.province] = districtsByProvince[r.province] || [];
+    }
+    const dlist = districtsByProvince[r.province];
+    if(!dlist.includes(r.district)) dlist.push(r.district);
+    const mlist = municipalitiesByDistrict[r.district] || (municipalitiesByDistrict[r.district] = []);
+    if(!mlist.includes(r.municipality)) mlist.push(r.municipality);
+  }
+  HIER = { provinces, districtsByProvince, municipalitiesByDistrict };
+}
+
+function bootSelectors(){
+  fillSelect(provinceSel, HIER.provinces, 'Select province');
+  fillSelect(aProvince, HIER.provinces, 'Select province');
+
+  provinceSel.addEventListener('change', ()=>{
+    const p = provinceSel.value;
+    fillSelect(districtSel, HIER.districtsByProvince[p]||[], 'Select district');
+    fillSelect(municipalitySel, [], 'Any (district-wide)');
+  });
+
+  districtSel.addEventListener('change', ()=>{
+    const d = districtSel.value;
+    const munis = HIER.municipalitiesByDistrict[d]||[];
+    fillSelect(municipalitySel, munis, 'Any (district-wide)');
+    municipalitySel.value = ''; // default = district-wide
+  });
+
+  municipalitySel.addEventListener('change', ()=>{
+    const m = municipalitySel.value;
+    authorityLabel.textContent = m ? (m + ' authority') : '— not set';
+  });
+
+  // Admin mirrors (no "Any" for admin)
+  aProvince.addEventListener('change', ()=>{
+    const p=aProvince.value; fillSelect(aDistrict, HIER.districtsByProvince[p]||[], 'Select district'); aDistrict.dispatchEvent(new Event('change'));
+  });
+  aDistrict.addEventListener('change', ()=>{
+    const d=aDistrict.value; fillSelect(aMunicipality, HIER.municipalitiesByDistrict[d]||[], 'Select municipality');
+  });
+
+  // Preselect first entries; municipality stays “Any”
+  if(HIER.provinces.length){
+    provinceSel.value = HIER.provinces[0]; provinceSel.dispatchEvent(new Event('change'));
+    const fd = (HIER.districtsByProvince[provinceSel.value]||[])[0];
+    if(fd){ districtSel.value = fd; districtSel.dispatchEvent(new Event('change')); }
+    // Admin mirrors
+    aProvince.value = provinceSel.value; aProvince.dispatchEvent(new Event('change'));
+    aDistrict.value = districtSel.value; aDistrict.dispatchEvent(new Event('change'));
+  }
+}
+
+// === Response normalization ===
+function _normalizeRows(json){
+  if(Array.isArray(json)) return json;
+  if(json && Array.isArray(json.rows))   return json.rows;    // your script
+  if(json && Array.isArray(json.donors)) return json.donors;
+  if(json && Array.isArray(json.data))   return json.data;
+  // last resort: {0:{},1:{}} → array
+  if(json && typeof json==='object'){
+    const vals = Object.values(json);
+    if(vals.length && vals.every(v => v && typeof v==='object' && !Array.isArray(v))) return vals;
+  }
+  return [];
+}
+function _mapRow(r, fb){
+  const o=(r&&typeof r==='object')?r:{};
+  const phone = String(o.phone ?? o.Phone ?? o.PHONE ?? o.phone_number ?? o.contact ?? '');
+  const blood = String(o.blood ?? o.Blood ?? o.BLOOD ?? o.blood_group ?? '');
+  return {
+    name:         String(o.name ?? o.Name ?? o.NAME ?? ''),
+    phone,
+    blood,
+    municipality: String(o.municipality ?? o.Municipality ?? o.MUNICIPALITY ?? (fb.municipality || '')),
+    district:     String(o.district ?? o.District ?? o.DISTRICT ?? (fb.district || ''))
+  };
+}
+
+// === API calls ===
+// Match your tester: send district (and municipality if chosen). No province needed for list.
+async function listDonorsAPI(district, municipality, blood){
+  const D=(district||'').trim(), M=(municipality||'').trim(), B=(blood||'').trim();
+  const params = new URLSearchParams({ action:'list' });
+  if(D) params.append('district', D);
+  if(M) params.append('municipality', M);
+  if(B) params.append('blood', B);
+
+  const url = `${API_URL}?${params.toString()}`;
+  let res, txt, json=null;
+  try{
+    res = await fetch(url, { method:'GET', cache:'no-store' });
+    txt = await res.text();
+  }catch{
+    return [];
+  }
+  if(dbgInfo){ dbgInfo.textContent = `GET ${url} — ${res ? res.status : 'ERR'} (${(txt||'').length} bytes)`; }
+  if(dbgOut){ dbgOut.textContent = (txt||'').slice(0,5000); }
+
+  if(!res || !res.ok) return [];
+  try{ json = JSON.parse(txt); }catch{}
+  const rows = _normalizeRows(json);
+  return rows.map(r => _mapRow(r, {district:D, municipality:M}));
+}
+
+async function addDonorAPI(payload, adminKey){
+  if(!adminKey) throw new Error('Admin key required.');
+  const body = new URLSearchParams({
+    action:'add', admin_key:adminKey,
+    province:payload.province, district:payload.district, municipality:payload.municipality,
+    name:payload.name, phone:payload.phone, blood:payload.blood
+  });
+  const res = await fetch(API_URL, { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body });
+  const txt = await res.text(); let json=null; try{ json = JSON.parse(txt); }catch{}
+  const ok = json && (json.ok===true || json.ok===1 || json.ok==='true' || json.status==='ok');
+  if(!ok) throw new Error(json ? (json.error||json.message||'Add failed') : txt);
+  return true;
+}
+
+// === Render ===
+function renderDonors(){
+  const d=districtSel.value, m=municipalitySel.value, bg=bloodSel.value;
+  if(!d){
+    donorsBody.innerHTML = '<tr><td colspan="5" class="muted">Select a district first.</td></tr>';
+    summaryPill.textContent = 'Ready';
+    return;
+  }
+  donorsBody.innerHTML = '<tr><td colspan="5" class="muted">Loading…</td></tr>';
+  listDonorsAPI(d,m,bg).then(rows=>{
+    if(!Array.isArray(rows)) rows=[];
+    const muniLabel = m || 'any municipality';
+    if(rows.length===0){
+      donorsBody.innerHTML = `<tr><td colspan="5" class="warn">No donors found for ${muniLabel}, ${d}.</td></tr>`;
+    }else{
+      donorsBody.innerHTML = rows.map(r=>`
+        <tr>
+          <td>${escapeHtml(r.name||'')}</td>
+          <td><a href="tel:${escapeHtml(r.phone||'')}">${escapeHtml(r.phone||'')}</a></td>
+          <td>${escapeHtml(r.blood||'')}</td>
+          <td>${escapeHtml(r.municipality||'')}</td>
+          <td>${escapeHtml(r.district||'')}</td>
+        </tr>`).join('');
+    }
+    summaryPill.textContent = rows.length + ' match' + (rows.length===1?'':'es');
+  }).catch(()=>{
+    donorsBody.innerHTML = '<tr><td colspan="5" class="warn">No donors found.</td></tr>';
+    summaryPill.textContent = '—';
+  });
+}
+
+// === Admin ===
+$('btnAddDonor').addEventListener('click', async ()=>{
+  const key = $('adminPass').value.trim(); if(!key){ adminMsg.textContent='Enter admin key.'; return; }
+  const p=aProvince.value, d=aDistrict.value, m=aMunicipality.value;
+  const name=$('aName').value.trim(); const phone=$('aPhone').value.trim(); const blood=$('aBlood').value;
+  if(!p||!d||!m||!name||!phone){ adminMsg.textContent='Please complete all fields.'; return; }
+  adminMsg.textContent='Saving…';
+  try{
+    await addDonorAPI({province:p,district:d,municipality:m,name,phone,blood}, key);
+    $('aName').value=''; $('aPhone').value='';
+    adminMsg.textContent=`Donor added to ${m}, ${d}.`;
+    if(districtSel.value===d && (municipalitySel.value===m || municipalitySel.value==='')) renderDonors();
+  }catch(err){
+    adminMsg.textContent = 'Error: ' + (err.message||String(err));
+  }
+});
+
+// === Boot ===
+(async function init(){
+  try{
+    summaryPill.textContent = 'Loading map…';
+    await loadCSV();               // builds HIER or shows csvErr if not found/0 rows
+    bootSelectors();               // populates dropdowns
+    summaryPill.textContent = 'Ready';
+  }catch(err){
+    console.error(err);
+    summaryPill.textContent = 'Map failed to load';
+    if(location.protocol === 'file:'){
+      csvErr.textContent = (csvErr.textContent ? csvErr.textContent + ' ' : '')
+        + 'Open via a local server (e.g., "python -m http.server") or GitHub Pages; file:// cannot fetch CSV.';
+    }
+  }
+})();
+$('btnShow').addEventListener('click', renderDonors);
+</script>
+</body>
+</html>
